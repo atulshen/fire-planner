@@ -93,6 +93,12 @@ The build outputs `dist/index.html` as a single-file app with JS and CSS inlined
 
 The repo includes [`.github/workflows/pages.yml`](./.github/workflows/pages.yml), which builds the app on pushes to `main` and deploys the generated `dist/` folder to GitHub Pages. This is the recommended way to publish the app, since `dist/` is generated output and is not checked into the repo.
 
+For a repo like `atulshen/fire-planner`, the expected site URL is:
+
+- `https://atulshen.github.io/fire-planner/`
+
+The Vite config uses a relative base path so the built single-file app works correctly from a GitHub Pages project site path.
+
 ## Testing
 
 Tests currently cover extracted logic modules rather than full browser flows.
