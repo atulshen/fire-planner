@@ -37,7 +37,7 @@ import { renderTaxEfficiency } from './render/tax-efficiency';
 import { renderBrokeragePage } from './render/brokerages';
 import { renderSymbolCatalogPage } from './render/symbol-catalog';
 import { calcAcaSubsidy, estimateBenchmarkPremium, estimateGoldPremium, getAcaCliff } from './calc/aca';
-import { calcProgressiveTax } from './calc/tax';
+import { calcFederalIncomeTax, calcProgressiveTax } from './calc/tax';
 import { getIrmaaSurcharge, getMedicareAnnualCost } from './calc/medicare';
 import { simulateDrawdown, getRmdFactor } from './calc/drawdown';
 import { guessAccountType, guessCategory } from './calc/category';
@@ -1439,6 +1439,7 @@ function renderConversionOptimizer(): void {
   const earnedIncome = getEarnedIncome();
   const annualSpending = readFloat('coSpending', 50000);
   const inflation = readFloat('inflationRate', 3) / 100;
+  const healthcareInflation = 0.03;
   const iraBalance = portfolioBalances.ira;
   const taxableBal = portfolioBalances.taxable;
   const taxableBasis = portfolioBalances.taxableBasis;
@@ -1464,7 +1465,7 @@ function renderConversionOptimizer(): void {
     return;
   }
 
-  $('coAssumptions').textContent = `Using current holdings automatically. Estimated annual returns by account mix: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year, and the comparison includes your earned income plus taxable portfolio cashflow when estimating ACA subsidies and yearly spending needs.`;
+  $('coAssumptions').textContent = `Using current holdings automatically. Estimated annual returns by account mix: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies with ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA.`;
 
   if (startAge >= lifeExp) {
     $('coResults').innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">Life expectancy must be greater than current age.</div></div>';
@@ -1498,6 +1499,40 @@ function renderConversionOptimizer(): void {
     return 0;
   }
 
+  function estimateAnnualHealthcareCost(age: number, yearsFromStart: number, magi: number): { annualCost: number; acaSub: number } {
+    if (age >= 65) {
+      const medicare = getMedicareAnnualCost(age, magi, healthcareInflation, age - 65);
+      return { annualCost: medicare.total, acaSub: 0 };
+    }
+
+    const inflationFactor = Math.pow(1 + healthcareInflation, yearsFromStart);
+    const annualPremium = estimateGoldPremium(age) * 12 * inflationFactor;
+    const aca = calcAcaSubsidy(magi, age);
+    const acaSub = (aca.subsidy || 0) * inflationFactor;
+    return {
+      annualCost: Math.max(annualPremium - acaSub, 0),
+      acaSub,
+    };
+  }
+
+  function solveGrossWithdrawal(
+    maxGross: number,
+    requiredNet: number,
+    netFromGross: (gross: number) => number,
+  ): number {
+    if (maxGross <= 0 || requiredNet <= 0) return 0;
+    if (netFromGross(maxGross) <= requiredNet) return maxGross;
+
+    let low = 0;
+    let high = maxGross;
+    for (let i = 0; i < 32; i++) {
+      const mid = (low + high) / 2;
+      if (netFromGross(mid) >= requiredNet) high = mid;
+      else low = mid;
+    }
+    return high;
+  }
+
   function simulateLifetime(doConvert: boolean) {
     let ira = iraBalance;
     let rothExisting = rothBal;
@@ -1511,6 +1546,7 @@ function renderConversionOptimizer(): void {
     const years: Array<{
       age: number;
       convAmt: number;
+      scenarioIncome: number;
       convTax: number;
       taxesPaid: number;
       rmd: number;
@@ -1538,57 +1574,82 @@ function renderConversionOptimizer(): void {
 
       const recurringTaxableIncome = taxable * taxableYield;
       const baselineIncome = earnedIncome + recurringTaxableIncome + ssThisYear + rmd;
-      const baselineTax = calcProgressiveTax(baselineIncome).tax;
+      const baselineTax = calcFederalIncomeTax(baselineIncome, 0).totalTax;
       const baselineAfterTaxCash = baselineIncome - baselineTax;
       const convAmt = doConvert ? getConversionAmount(age, ira, strategy, baselineIncome) : 0;
+      let ordinaryIncome = baselineIncome + convAmt;
       let realizedTaxableGains = 0;
-      let taxableIncome = baselineIncome + convAmt;
-      const convTax = convAmt > 0 ? (calcProgressiveTax(baselineIncome + convAmt).tax - baselineTax) : 0;
-      let taxesPaidThisYear = baselineTax + convTax;
-      let acaSub = !onMedicare ? calcAcaSubsidy(taxableIncome, age).subsidy || 0 : 0;
+      let iraSpendingDraw = 0;
+      let taxableIncome = ordinaryIncome;
+      let currentTax = calcFederalIncomeTax(ordinaryIncome, 0).totalTax;
+      const convTax = currentTax - baselineTax;
+      let taxesPaidThisYear = currentTax;
+      let healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, taxableIncome);
+      let acaSub = healthcare.acaSub;
 
       ira -= convAmt;
       rothConverted += convAmt;
       ira -= rmd;
 
-      let cashAvailable = baselineAfterTaxCash;
-      let spendingNeed = inflatedSpending + (!onMedicare ? estimateGoldPremium(age) * 12 - acaSub : 2400);
-      let netCashAfterTaxes = cashAvailable - convTax;
+      let spendingNeed = inflatedSpending + healthcare.annualCost;
+      let netCashAfterTaxes = baselineAfterTaxCash - convTax;
       let spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
       let remaining = Math.max(spendingNeed - netCashAfterTaxes, 0);
 
       if (remaining > 0 && taxable > 0) {
-        const draw = Math.min(remaining, taxable);
         const gainRatio = taxable > 0 ? Math.max(0, 1 - taxableCostBasis / taxable) : 0;
-        realizedTaxableGains = draw * gainRatio;
-        taxableIncome = baselineIncome + convAmt + realizedTaxableGains;
-        acaSub = !onMedicare ? calcAcaSubsidy(taxableIncome, age).subsidy || 0 : 0;
-        spendingNeed = inflatedSpending + (!onMedicare ? estimateGoldPremium(age) * 12 - acaSub : 2400);
-        const adjustedRemaining = Math.max(spendingNeed - netCashAfterTaxes, 0);
-        const adjustedDraw = Math.min(adjustedRemaining, taxable);
-        const adjustedGainRatio = taxable > 0 ? Math.max(0, 1 - taxableCostBasis / taxable) : 0;
-        realizedTaxableGains = adjustedDraw * adjustedGainRatio;
-        const ltcgTax = realizedTaxableGains * 0.15;
-        taxableCostBasis -= adjustedDraw * (1 - adjustedGainRatio);
+        const taxBeforeTaxable = currentTax;
+        let adjustedDraw = 0;
+
+        for (let i = 0; i < 3; i++) {
+          const neededNet = Math.max(spendingNeed - netCashAfterTaxes, 0);
+          adjustedDraw = solveGrossWithdrawal(taxable, neededNet, (gross) => {
+            const gains = gross * gainRatio;
+            const taxAfter = calcFederalIncomeTax(ordinaryIncome, gains).totalTax;
+            return gross - (taxAfter - taxBeforeTaxable);
+          });
+
+          realizedTaxableGains = adjustedDraw * gainRatio;
+          taxableIncome = ordinaryIncome + realizedTaxableGains;
+          healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, taxableIncome);
+          acaSub = healthcare.acaSub;
+          const updatedSpendingNeed = inflatedSpending + healthcare.annualCost;
+          if (Math.abs(updatedSpendingNeed - spendingNeed) < 1) {
+            spendingNeed = updatedSpendingNeed;
+            break;
+          }
+          spendingNeed = updatedSpendingNeed;
+        }
+
+        const taxAfterTaxable = calcFederalIncomeTax(ordinaryIncome, realizedTaxableGains).totalTax;
+        const ltcgTax = taxAfterTaxable - taxBeforeTaxable;
+        taxableCostBasis -= adjustedDraw * (1 - gainRatio);
         taxable -= adjustedDraw;
-        taxesPaidThisYear += ltcgTax;
+        currentTax = taxAfterTaxable;
+        taxesPaidThisYear = currentTax;
         netCashAfterTaxes += adjustedDraw - ltcgTax;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
-        taxableIncome = baselineIncome + convAmt + realizedTaxableGains;
+        taxableIncome = ordinaryIncome + realizedTaxableGains;
       }
 
       if (remaining > 0 && ira > 0) {
-        const marginalDelta = calcProgressiveTax(taxableIncome + 1000).tax - calcProgressiveTax(taxableIncome).tax;
-        const effMargRate = marginalDelta / 1000;
-        const grossUp = remaining / Math.max(1 - effMargRate, 0.01);
-        const draw = Math.min(grossUp, ira);
-        const drawTax = draw * effMargRate;
+        const taxBeforeIra = currentTax;
+        const draw = solveGrossWithdrawal(ira, remaining, (gross) => {
+          const taxAfter = calcFederalIncomeTax(ordinaryIncome + gross, realizedTaxableGains).totalTax;
+          return gross - (taxAfter - taxBeforeIra);
+        });
+        const taxAfterIra = calcFederalIncomeTax(ordinaryIncome + draw, realizedTaxableGains).totalTax;
+        const drawTax = taxAfterIra - taxBeforeIra;
         ira -= draw;
-        taxesPaidThisYear += drawTax;
+        iraSpendingDraw = draw;
+        ordinaryIncome += draw;
+        currentTax = taxAfterIra;
+        taxesPaidThisYear = currentTax;
         netCashAfterTaxes += draw - drawTax;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
+        taxableIncome = ordinaryIncome + realizedTaxableGains;
       }
 
       let roth = rothExisting + rothConverted;
@@ -1618,6 +1679,7 @@ function renderConversionOptimizer(): void {
       years.push({
         age,
         convAmt,
+        scenarioIncome: convAmt + realizedTaxableGains + iraSpendingDraw,
         convTax,
         taxesPaid: taxesPaidThisYear,
         rmd,
@@ -1702,7 +1764,7 @@ function renderConversionOptimizer(): void {
     <p style="font-size:0.8rem;color:var(--muted);margin-bottom:0.75rem;">
       ${strategyDesc[strategy]}
       Both scenarios start with $${fmt(annualSpending)}/yr spending, inflated ${fmtD(inflation * 100, 1)}% annually, plus healthcare costs.
-      Withdrawal order: RMDs first, then taxable (estimated capital gains tax), then IRA (ordinary income), then Roth/HSA (modeled as tax-free).
+      Withdrawal order: RMDs first, then taxable (long-term capital gains brackets), then IRA (ordinary income brackets), then Roth/HSA (modeled as tax-free).
       Growth assumptions are inferred from your current holdings by account rather than a manual growth-rate input.
       <br>* = Medicare (65+). + = RMDs begin (73+).
     </p>
@@ -1711,11 +1773,14 @@ function renderConversionOptimizer(): void {
         <thead><tr>
           <th style="text-align:left">Age</th>
           <th>Convert</th>
+          <th>Income (CVT)</th>
+          <th>Income (NO)</th>
           <th>RMD</th>
           <th>Conv Tax</th>
           <th>Tax (CVT)</th>
           <th>Tax (NO)</th>
-          <th>ACA Sub</th>
+          <th>ACA Sub (CVT)</th>
+          <th>ACA Sub (NO)</th>
           <th>Wealth (cvt)</th>
           <th>Wealth (no)</th>
         </tr></thead>
@@ -1724,11 +1789,14 @@ function renderConversionOptimizer(): void {
           return `<tr class="${y.overCliff ? 'co-cliff' : ''}" style="${y.age === 65 ? 'border-top:2px solid var(--blue);' : ''}${y.age === 73 ? 'border-top:2px solid var(--orange);' : ''}">
             <td>${y.age}${y.onMedicare ? '*' : ''}${y.age >= 73 ? '+' : ''}</td>
             <td style="color:${y.convAmt > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(y.convAmt)}</td>
+            <td>$${fmtK(y.scenarioIncome)}</td>
+            <td>$${fmtK(n.scenarioIncome)}</td>
             <td>$${fmtK(y.rmd)}</td>
             <td style="color:var(--red)">$${fmtK(y.convTax)}</td>
             <td style="color:var(--red)">$${fmtK(y.taxesPaid)}</td>
             <td style="color:var(--red)">$${fmtK(n.taxesPaid)}</td>
             <td style="color:${y.acaSub > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(y.acaSub)}</td>
+            <td style="color:${n.acaSub > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(n.acaSub)}</td>
             <td>$${fmtK(y.totalWealth)}</td>
             <td>$${fmtK(n.totalWealth)}</td>
           </tr>`;

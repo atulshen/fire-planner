@@ -13,6 +13,13 @@ export const TAX_BRACKETS_2026: TaxBracket[] = [
 
 export const STANDARD_DEDUCTION = 16100; // 2026 single
 
+// 2026 long-term capital gains brackets (single filer), taxable income basis
+export const LTCG_BRACKETS_2026: TaxBracket[] = [
+  { min: 0, max: 49450, rate: 0.00 },
+  { min: 49450, max: 545500, rate: 0.15 },
+  { min: 545500, max: Infinity, rate: 0.20 },
+];
+
 // RMD distribution periods by age (from IRS Uniform Lifetime Table)
 export const RMD_TABLE: Record<number, number> = {
   73: 26.5, 74: 25.5, 75: 24.6, 76: 23.7, 77: 22.9,

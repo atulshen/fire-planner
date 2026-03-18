@@ -1,4 +1,4 @@
-import { TAX_BRACKETS_2026, STANDARD_DEDUCTION } from '../constants/tax';
+import { TAX_BRACKETS_2026, STANDARD_DEDUCTION, LTCG_BRACKETS_2026 } from '../constants/tax';
 import type { TaxResult } from '../types';
 
 /**
@@ -17,6 +17,48 @@ export function calcProgressiveTax(income: number): TaxResult {
 
   const effectiveRate = income > 0 ? tax / income : 0;
   return { tax, effectiveRate };
+}
+
+/**
+ * Calculate federal long-term capital gains tax for a single filer.
+ * The standard deduction is applied against ordinary income first and then any remaining deduction shelters gains.
+ */
+export function calcLongTermCapitalGainsTax(ordinaryIncome: number, capitalGains: number): TaxResult {
+  const taxableOrdinaryIncome = Math.max(ordinaryIncome - STANDARD_DEDUCTION, 0);
+  const remainingDeduction = Math.max(STANDARD_DEDUCTION - ordinaryIncome, 0);
+  const taxableCapitalGains = Math.max(capitalGains - remainingDeduction, 0);
+
+  let tax = 0;
+  let remainingGains = taxableCapitalGains;
+
+  for (const bracket of LTCG_BRACKETS_2026) {
+    if (remainingGains <= 0) break;
+    const bracketRoom = Math.max(bracket.max - Math.max(taxableOrdinaryIncome, bracket.min), 0);
+    if (bracketRoom <= 0) continue;
+    const gainsInBracket = Math.min(remainingGains, bracketRoom);
+    tax += gainsInBracket * bracket.rate;
+    remainingGains -= gainsInBracket;
+  }
+
+  const effectiveRate = capitalGains > 0 ? tax / capitalGains : 0;
+  return { tax, effectiveRate };
+}
+
+export function calcFederalIncomeTax(ordinaryIncome: number, capitalGains = 0): {
+  ordinaryTax: number;
+  capitalGainsTax: number;
+  totalTax: number;
+  effectiveRate: number;
+} {
+  const ordinaryTax = calcProgressiveTax(ordinaryIncome).tax;
+  const capitalGainsTax = calcLongTermCapitalGainsTax(ordinaryIncome, capitalGains).tax;
+  const grossIncome = ordinaryIncome + capitalGains;
+  return {
+    ordinaryTax,
+    capitalGainsTax,
+    totalTax: ordinaryTax + capitalGainsTax,
+    effectiveRate: grossIncome > 0 ? (ordinaryTax + capitalGainsTax) / grossIncome : 0,
+  };
 }
 
 /**

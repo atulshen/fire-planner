@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calcProgressiveTax, getMarginalRate } from '../../src/calc/tax';
+import { calcFederalIncomeTax, calcLongTermCapitalGainsTax, calcProgressiveTax, getMarginalRate } from '../../src/calc/tax';
 import { STANDARD_DEDUCTION } from '../../src/constants/tax';
 
 describe('calcProgressiveTax', () => {
@@ -54,5 +54,31 @@ describe('getMarginalRate', () => {
   it('returns 22% for income in 22% bracket', () => {
     // $16,100 + $50,400 = $66,500 is top of 12% bracket
     expect(getMarginalRate(70000)).toBe(0.22);
+  });
+});
+
+describe('calcLongTermCapitalGainsTax', () => {
+  it('uses remaining standard deduction to shelter gains', () => {
+    const result = calcLongTermCapitalGainsTax(10000, 10000);
+    expect(result.tax).toBe(0);
+  });
+
+  it('keeps gains in the 0% bracket when ordinary taxable income leaves room', () => {
+    const result = calcLongTermCapitalGainsTax(40000, 10000);
+    expect(result.tax).toBe(0);
+  });
+
+  it('taxes only the portion above the 0% bracket at 15%', () => {
+    const result = calcLongTermCapitalGainsTax(60000, 10000);
+    expect(result.tax).toBeCloseTo(667.5, 0);
+  });
+});
+
+describe('calcFederalIncomeTax', () => {
+  it('combines ordinary income tax and long-term capital gains tax', () => {
+    const result = calcFederalIncomeTax(80000, 20000);
+    expect(result.ordinaryTax).toBeCloseTo(8770, 0);
+    expect(result.capitalGainsTax).toBeCloseTo(3000, 0);
+    expect(result.totalTax).toBeCloseTo(11770, 0);
   });
 });
