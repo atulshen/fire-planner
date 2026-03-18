@@ -27,7 +27,7 @@ function drawPlannerChart(result: FirePlannerResult): void {
   const cw = w - padL - padR;
   const ch = h - padT - padB;
 
-  const maxVal = Math.max(...result.netWorths, result.fireNumber) * 1.1 || 1;
+  const maxVal = Math.max(...result.netWorths, ...result.fireTargets) * 1.1 || 1;
   const xScale = (i: number) => padL + (i / Math.max(result.years.length - 1, 1)) * cw;
   const yScale = (value: number) => padT + ch - (value / maxVal) * ch;
 
@@ -54,21 +54,25 @@ function drawPlannerChart(result: FirePlannerResult): void {
     ctx.fillText(String(result.years[i]), xScale(i), h - 8);
   }
 
-  ctx.strokeStyle = 'rgba(34,197,94,0.27)';
+  ctx.strokeStyle = 'rgba(34,197,94,0.32)';
   ctx.lineWidth = 2;
   ctx.setLineDash([6, 4]);
   ctx.beginPath();
-  ctx.moveTo(padL, yScale(result.fireNumber));
-  ctx.lineTo(w - padR, yScale(result.fireNumber));
+  for (let i = 0; i < result.fireTargets.length; i++) {
+    const x = xScale(i);
+    const y = yScale(result.fireTargets[i]);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
   ctx.stroke();
   ctx.setLineDash([]);
 
   ctx.fillStyle = '#22c55e';
   ctx.font = '10px -apple-system, system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(`FIRE: $${fmtK(result.fireNumber)}`, padL + 4, yScale(result.fireNumber) - 6);
+  ctx.fillText(`Target: $${fmtK(result.retirementFireNumber)}`, padL + 4, yScale(result.fireTargets[Math.min(result.fireTargets.length - 1, result.yearsToRetire ?? result.fireTargets.length - 1)]) - 6);
 
-  if (result.yearsToRetire < result.years.length) {
+  if (result.yearsToRetire !== null && result.yearsToRetire < result.years.length) {
     const retireX = xScale(result.yearsToRetire);
     ctx.strokeStyle = 'rgba(249,115,22,0.27)';
     ctx.lineWidth = 2;
@@ -123,17 +127,17 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
     <div class="stat green">
       <div class="label">FIRE Number</div>
       <div class="value">$${fmtK(result.fireNumber)}</div>
-      <div class="sub">Target net worth</div>
+      <div class="sub">Target net worth in today's dollars</div>
     </div>
-    <div class="stat ${result.fireAge !== null && result.fireAge <= result.years[result.yearsToRetire] ? 'green' : 'orange'}">
-      <div class="label">FIRE Age</div>
-      <div class="value">${result.fireAge !== null ? result.fireAge : '60+'}</div>
-      <div class="sub">${result.fireAge !== null && result.yearsToFire !== null ? `In ${result.yearsToFire} years` : 'Increase savings rate'}</div>
+    <div class="stat ${result.fireAge !== null ? 'green' : 'orange'}">
+      <div class="label">Retirement Age</div>
+      <div class="value">${result.fireAge !== null ? result.fireAge : 'Not reached'}</div>
+      <div class="sub">${result.fireAge !== null && result.yearsToFire !== null ? `In ${result.yearsToFire} years` : `Still short at age ${result.projectionAge}`}</div>
     </div>
     <div class="stat blue">
-      <div class="label">Projected at ${result.years[result.yearsToRetire]}</div>
-      <div class="value">$${fmtK(result.netWorthAtRetire)}</div>
-      <div class="sub">${result.netWorthAtRetire >= result.fireNumber ? 'Exceeds FIRE number' : `$${fmtK(Math.max(result.fireNumber - result.netWorthAtRetire, 0))} short`}</div>
+      <div class="label">Projected at ${result.projectionAge}</div>
+      <div class="value">$${fmtK(result.projectedNetWorth)}</div>
+      <div class="sub">${result.projectedNetWorth >= result.retirementFireNumber ? 'Covers target spending' : `$${fmtK(Math.max(result.retirementFireNumber - result.projectedNetWorth, 0))} short`}</div>
     </div>
     <div class="stat ${result.savingsRate >= 50 ? 'green' : result.savingsRate >= 25 ? 'orange' : 'red'}">
       <div class="label">Savings Rate</div>
@@ -141,14 +145,14 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
       <div class="sub">$${fmtK(Math.max(result.annualSavings, 0))}/yr saved</div>
     </div>
     <div class="stat blue">
-      <div class="label">Coast FIRE</div>
-      <div class="value">$${fmtK(Math.max(result.coastFireNumber, 0))}</div>
-      <div class="sub">${result.currentSavings >= result.coastFireNumber ? 'Already coast FI!' : `$${fmtK(Math.max(result.coastFireNumber - result.currentSavings, 0))} to coast`}</div>
+      <div class="label">Target at Retirement</div>
+      <div class="value">$${fmtK(result.retirementFireNumber)}</div>
+      <div class="sub">Inflation-adjusted target at age ${result.projectionAge}</div>
     </div>
     <div class="stat green">
       <div class="label">Safe Withdrawal</div>
       <div class="value">$${fmtK(result.sustainableWithdrawal)}/yr</div>
-      <div class="sub">$${fmtK(result.sustainableWithdrawal / 12)}/mo at retirement</div>
+      <div class="sub">$${fmtK(result.sustainableWithdrawal / 12)}/mo at age ${result.projectionAge}</div>
     </div>
   `;
 
@@ -166,7 +170,7 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
     <li>
       <span class="planner-milestone-dot" style="background:${milestone.target === 'FIRE' ? 'var(--accent)' : 'var(--blue)'}"></span>
       <span class="planner-milestone-year">Age ${milestone.age}</span>
-      <span class="planner-milestone-desc">${milestone.target === 'FIRE' ? 'FIRE achieved!' : `$${fmtK(milestone.target)} net worth`}</span>
+      <span class="planner-milestone-desc">${milestone.target === 'FIRE' ? 'Retirement ready' : `$${fmtK(milestone.target)} net worth`}</span>
     </li>
   `).join('');
 

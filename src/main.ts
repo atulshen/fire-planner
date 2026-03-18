@@ -73,7 +73,7 @@ const APP_HTML = `
       <input type="number" id="globalBaseIncome" value="30000" min="0" step="1000" style="width:90px;" title="Non-investment earned income (part-time work, pension, Social Security, etc.)">
     </div>
     <div class="page-tabs">
-      <button class="page-tab active" data-page="planner" onclick="switchPage('planner')">Planner</button>
+      <button class="page-tab active" data-page="planner" onclick="switchPage('planner')">Retirement Age</button>
       <button class="page-tab" data-page="portfolio" onclick="switchPage('portfolio')">Portfolio</button>
       <button class="page-tab" data-page="brokerages" onclick="switchPage('brokerages')">Brokerages</button>
       <button class="page-tab" data-page="symbols" onclick="switchPage('symbols')">Symbols</button>
@@ -89,17 +89,11 @@ const APP_HTML = `
   <div class="page-section active" id="pagePlanner">
     <div class="planner-layout">
       <div class="panel">
-        <h2>Eligibility Inputs</h2>
+        <h2>Retirement Assumptions</h2>
 
-        <div class="planner-row">
-          <div class="planner-field">
-            <label for="currentAge">Current Age</label>
-            <input type="number" id="currentAge" value="30" min="18" max="80">
-          </div>
-          <div class="planner-field">
-            <label for="retireAge">Target Retire Age</label>
-            <input type="number" id="retireAge" value="45" min="25" max="80">
-          </div>
+        <div class="planner-field">
+          <label for="currentAge">Current Age</label>
+          <input type="number" id="currentAge" value="30" min="18" max="80">
         </div>
 
         <div class="planner-field">
@@ -151,7 +145,7 @@ const APP_HTML = `
 
       <div class="planner-right-col">
         <div class="panel">
-          <h2>FIRE Summary</h2>
+          <h2>Retirement Age</h2>
           <div id="plannerStatusBadge"></div>
           <div class="planner-results-grid" id="plannerResultsGrid"></div>
 
@@ -653,7 +647,6 @@ let cbParsedRows: CostBasisAggregate[] = [];
 let acctMap: Record<string, AccountType> = {};
 const plannerInputIds = [
   'currentAge',
-  'retireAge',
   'annualIncome',
   'annualExpenses',
   'currentSavings',
@@ -740,7 +733,6 @@ function renderPortfolio(): void {
 function readPlannerInputs() {
   return {
     currentAge: readInt('currentAge', readInt('globalAge', 30)),
-    retireAge: readInt('retireAge', 45),
     annualIncome: readFloat('annualIncome', 100000),
     annualExpenses: readFloat('annualExpenses', 40000),
     currentSavings: readFloat('currentSavings', 50000),
@@ -1446,6 +1438,7 @@ function renderConversionOptimizer(): void {
   const lifeExp = readInt('coLifeExp', 90);
   const earnedIncome = getEarnedIncome();
   const annualSpending = readFloat('coSpending', 50000);
+  const inflation = readFloat('inflationRate', 3) / 100;
   const iraBalance = portfolioBalances.ira;
   const taxableBal = portfolioBalances.taxable;
   const taxableBasis = portfolioBalances.taxableBasis;
@@ -1471,7 +1464,7 @@ function renderConversionOptimizer(): void {
     return;
   }
 
-  $('coAssumptions').textContent = `Using current holdings automatically. Estimated annual returns by account mix: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%. The comparison includes your earned income plus taxable portfolio cashflow when estimating ACA subsidies and yearly spending needs.`;
+  $('coAssumptions').textContent = `Using current holdings automatically. Estimated annual returns by account mix: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year, and the comparison includes your earned income plus taxable portfolio cashflow when estimating ACA subsidies and yearly spending needs.`;
 
   if (startAge >= lifeExp) {
     $('coResults').innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">Life expectancy must be greater than current age.</div></div>';
@@ -1532,6 +1525,8 @@ function renderConversionOptimizer(): void {
     }> = [];
 
     for (let age = startAge; age < lifeExp; age++) {
+      const yearsFromStart = age - startAge;
+      const inflatedSpending = annualSpending * Math.pow(1 + inflation, yearsFromStart);
       const ssThisYear = age >= 67 ? ssIncome : 0;
       const onMedicare = age >= 65;
       let rmd = 0;
@@ -1555,9 +1550,10 @@ function renderConversionOptimizer(): void {
       ira -= rmd;
 
       let cashAvailable = baselineAfterTaxCash;
-      let spendingNeed = annualSpending + (!onMedicare ? estimateGoldPremium(age) * 12 - acaSub : 2400);
-      let spentThisYear = Math.min(cashAvailable, spendingNeed);
-      let remaining = spendingNeed - cashAvailable;
+      let spendingNeed = inflatedSpending + (!onMedicare ? estimateGoldPremium(age) * 12 - acaSub : 2400);
+      let netCashAfterTaxes = cashAvailable - convTax;
+      let spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+      let remaining = Math.max(spendingNeed - netCashAfterTaxes, 0);
 
       if (remaining > 0 && taxable > 0) {
         const draw = Math.min(remaining, taxable);
@@ -1565,8 +1561,8 @@ function renderConversionOptimizer(): void {
         realizedTaxableGains = draw * gainRatio;
         taxableIncome = baselineIncome + convAmt + realizedTaxableGains;
         acaSub = !onMedicare ? calcAcaSubsidy(taxableIncome, age).subsidy || 0 : 0;
-        spendingNeed = annualSpending + (!onMedicare ? estimateGoldPremium(age) * 12 - acaSub : 2400);
-        const adjustedRemaining = Math.max(spendingNeed - cashAvailable, 0);
+        spendingNeed = inflatedSpending + (!onMedicare ? estimateGoldPremium(age) * 12 - acaSub : 2400);
+        const adjustedRemaining = Math.max(spendingNeed - netCashAfterTaxes, 0);
         const adjustedDraw = Math.min(adjustedRemaining, taxable);
         const adjustedGainRatio = taxable > 0 ? Math.max(0, 1 - taxableCostBasis / taxable) : 0;
         realizedTaxableGains = adjustedDraw * adjustedGainRatio;
@@ -1574,7 +1570,8 @@ function renderConversionOptimizer(): void {
         taxableCostBasis -= adjustedDraw * (1 - adjustedGainRatio);
         taxable -= adjustedDraw;
         totalTaxPaid += ltcgTax;
-        spentThisYear = cashAvailable + adjustedDraw - ltcgTax;
+        netCashAfterTaxes += adjustedDraw - ltcgTax;
+        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
         taxableIncome = baselineIncome + convAmt + realizedTaxableGains;
       }
@@ -1587,7 +1584,8 @@ function renderConversionOptimizer(): void {
         const drawTax = draw * effMargRate;
         ira -= draw;
         totalTaxPaid += drawTax;
-        spentThisYear += draw - drawTax;
+        netCashAfterTaxes += draw - drawTax;
+        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
       }
 
@@ -1597,7 +1595,8 @@ function renderConversionOptimizer(): void {
         const fromConverted = Math.min(draw, rothConverted);
         rothConverted -= fromConverted;
         rothExisting -= (draw - fromConverted);
-        spentThisYear += draw;
+        netCashAfterTaxes += draw;
+        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
       }
 
@@ -1699,7 +1698,7 @@ function renderConversionOptimizer(): void {
     <div class="te-section-title">Year-by-Year Comparison: Convert vs Don't Convert</div>
     <p style="font-size:0.8rem;color:var(--muted);margin-bottom:0.75rem;">
       ${strategyDesc[strategy]}
-      Both scenarios assume $${fmt(annualSpending)}/yr spending + healthcare costs.
+      Both scenarios start with $${fmt(annualSpending)}/yr spending, inflated ${fmtD(inflation * 100, 1)}% annually, plus healthcare costs.
       Withdrawal order: RMDs first, then taxable (estimated capital gains tax), then IRA (ordinary income), then Roth/HSA (modeled as tax-free).
       Growth assumptions are inferred from your current holdings by account rather than a manual growth-rate input.
       <br>* = Medicare (65+). + = RMDs begin (73+).
@@ -2956,7 +2955,6 @@ function loadDemoPortfolio(event: Event): void {
   $('globalBaseIncome').value = '30000';
   const plannerDefaults: Record<(typeof plannerInputIds)[number], string> = {
     currentAge: '50',
-    retireAge: '55',
     annualIncome: '100000',
     annualExpenses: '40000',
     currentSavings: '250000',

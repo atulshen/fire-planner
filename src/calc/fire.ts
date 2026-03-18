@@ -1,6 +1,5 @@
 export interface FirePlannerInputs {
   currentAge: number;
-  retireAge: number;
   annualIncome: number;
   annualExpenses: number;
   currentSavings: number;
@@ -20,14 +19,16 @@ export interface FirePlannerResult {
   currentSavings: number;
   years: number[];
   netWorths: number[];
-  yearsToRetire: number;
+  fireTargets: number[];
+  yearsToRetire: number | null;
   annualSavings: number;
   savingsRate: number;
   fireNumber: number;
+  retirementFireNumber: number;
   fireAge: number | null;
   yearsToFire: number | null;
-  netWorthAtRetire: number;
-  coastFireNumber: number;
+  projectedNetWorth: number;
+  projectionAge: number;
   sustainableWithdrawal: number;
   contributionsAtRetire: number;
   growthAtRetire: number;
@@ -41,9 +42,12 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+const MAX_PROJECTION_AGE = 100;
+const MIN_PROJECTION_YEARS = 40;
+const POST_RETIREMENT_YEARS = 30;
+
 export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult {
   const currentAge = clamp(inputs.currentAge || 0, 18, 100);
-  const retireAge = Math.max(inputs.retireAge || currentAge, currentAge);
   const annualIncome = Math.max(inputs.annualIncome || 0, 0);
   const annualExpenses = Math.max(inputs.annualExpenses || 0, 0);
   const currentSavings = Math.max(inputs.currentSavings || 0, 0);
@@ -53,79 +57,91 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
   const taxRate = clamp(inputs.taxRate || 0, 0, 100) / 100;
   const retireExpenses = Math.max(inputs.retireExpenses || 0, 0);
 
-  const yearsToRetire = Math.max(retireAge - currentAge, 0);
   const netIncome = annualIncome * (1 - taxRate);
   const annualSavings = netIncome - annualExpenses;
   const savingsRate = netIncome > 0 ? (annualSavings / netIncome) * 100 : 0;
-
-  const years: number[] = [];
-  const netWorths: number[] = [];
-  const contributions: number[] = [];
-  const growthAmounts: number[] = [];
-
-  let balance = currentSavings;
-  let totalContrib = currentSavings;
-  let totalGrowth = 0;
-
-  for (let y = 0; y <= Math.max(yearsToRetire, 40); y++) {
-    years.push(currentAge + y);
-    netWorths.push(balance);
-    contributions.push(totalContrib);
-    growthAmounts.push(totalGrowth);
-
-    if (y < yearsToRetire) {
-      const growth = balance * returnRate;
-      balance += growth + annualSavings;
-      totalContrib += annualSavings;
-      totalGrowth += growth;
-    } else {
-      const growth = balance * returnRate;
-      balance += growth - retireExpenses;
-      totalGrowth += growth;
-    }
-
-    if (balance < 0 && y > yearsToRetire) balance = 0;
-  }
-
   const fireNumber = retireExpenses / withdrawalRate;
-  const netWorthAtRetire = netWorths[yearsToRetire] || 0;
+  const maxYears = Math.max(MAX_PROJECTION_AGE - currentAge, 0);
+  const inflate = (amount: number, yearOffset: number) => amount * Math.pow(1 + inflationRate, Math.max(yearOffset, 0));
+  const fireTargetForYear = (yearOffset: number) => inflate(fireNumber, yearOffset);
 
   let yearsToFire: number | null = null;
-  balance = currentSavings;
-  for (let y = 0; y <= 60; y++) {
-    if (balance >= fireNumber) {
+  let balance = currentSavings;
+  for (let y = 0; y <= maxYears; y++) {
+    if (balance >= fireTargetForYear(y)) {
       yearsToFire = y;
       break;
     }
-    balance = balance * (1 + returnRate) + annualSavings;
+    const yearlySavings = netIncome - inflate(annualExpenses, y);
+    balance = balance * (1 + returnRate) + yearlySavings;
   }
 
   const fireAge = yearsToFire !== null ? currentAge + yearsToFire : null;
-  const coastFireNumber = fireNumber / Math.pow(1 + returnRate, yearsToRetire);
-  const sustainableWithdrawal = netWorthAtRetire * withdrawalRate;
-  const contributionsAtRetire = contributions[yearsToRetire] ?? currentSavings;
-  const growthAtRetire = growthAmounts[yearsToRetire] ?? 0;
-  const totalAtRetire = Math.max(netWorthAtRetire, 1);
+  const yearsToRetire = yearsToFire;
+  const projectionYears = yearsToFire !== null
+    ? Math.min(maxYears, Math.max(yearsToFire + POST_RETIREMENT_YEARS, MIN_PROJECTION_YEARS))
+    : maxYears;
+
+  const years: number[] = [];
+  const netWorths: number[] = [];
+  const fireTargets: number[] = [];
+  const contributions: number[] = [];
+  const growthAmounts: number[] = [];
+
+  balance = currentSavings;
+  let totalContrib = currentSavings;
+  let totalGrowth = 0;
+
+  for (let y = 0; y <= projectionYears; y++) {
+    years.push(currentAge + y);
+    netWorths.push(balance);
+    fireTargets.push(fireTargetForYear(y));
+    contributions.push(totalContrib);
+    growthAmounts.push(totalGrowth);
+
+    const growth = balance * returnRate;
+    const retired = yearsToRetire !== null && y >= yearsToRetire;
+
+    if (retired) {
+      const inflatedRetireExpenses = inflate(retireExpenses, y);
+      balance += growth - inflatedRetireExpenses;
+    } else {
+      const yearlySavings = netIncome - inflate(annualExpenses, y);
+      balance += growth + yearlySavings;
+      totalContrib += yearlySavings;
+    }
+
+    totalGrowth += growth;
+
+    if (balance < 0 && retired) balance = 0;
+  }
+
+  const referenceYear = yearsToRetire ?? projectionYears;
+  const retirementFireNumber = fireTargets[referenceYear] ?? fireNumber;
+  const projectedNetWorth = netWorths[referenceYear] ?? 0;
+  const projectionAge = years[referenceYear] ?? currentAge;
+  const sustainableWithdrawal = projectedNetWorth * withdrawalRate;
+  const contributionsAtRetire = contributions[referenceYear] ?? currentSavings;
+  const growthAtRetire = growthAmounts[referenceYear] ?? 0;
+  const totalAtRetire = Math.max(projectedNetWorth, 1);
   const contributionsPct = clamp((contributionsAtRetire / totalAtRetire) * 100, 0, 100);
   const growthPct = 100 - contributionsPct;
 
   const status: FirePlannerResult['status'] =
-    fireAge !== null && fireAge <= retireAge
+    yearsToFire !== null && yearsToFire <= 10
       ? 'on_track'
-      : fireAge !== null && fireAge <= retireAge + 5
+      : yearsToFire !== null && yearsToFire <= 20
         ? 'close'
         : 'needs_work';
 
   const milestones: FirePlannerMilestone[] = [];
   const targets = [100000, 250000, 500000, 1000000, 2000000];
-  balance = currentSavings;
-  for (let y = 0; y <= 50; y++) {
+  for (let y = 0; y < years.length; y++) {
     for (const target of targets) {
-      if (balance >= target && !milestones.find((milestone) => milestone.target === target)) {
-        milestones.push({ age: currentAge + y, target });
+      if (netWorths[y] >= target && !milestones.find((milestone) => milestone.target === target)) {
+        milestones.push({ age: years[y], target });
       }
     }
-    balance = balance * (1 + returnRate) + annualSavings;
   }
   if (fireAge !== null) milestones.push({ age: fireAge, target: 'FIRE' });
   milestones.sort((a, b) => a.age - b.age);
@@ -134,14 +150,16 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
     currentSavings,
     years,
     netWorths,
+    fireTargets,
     yearsToRetire,
     annualSavings,
     savingsRate,
     fireNumber,
+    retirementFireNumber,
     fireAge,
     yearsToFire,
-    netWorthAtRetire,
-    coastFireNumber,
+    projectedNetWorth,
+    projectionAge,
     sustainableWithdrawal,
     contributionsAtRetire,
     growthAtRetire,
