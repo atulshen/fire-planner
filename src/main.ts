@@ -1512,6 +1512,7 @@ function renderConversionOptimizer(): void {
       age: number;
       convAmt: number;
       convTax: number;
+      taxesPaid: number;
       rmd: number;
       acaSub: number;
       taxableIncome: number;
@@ -1543,6 +1544,7 @@ function renderConversionOptimizer(): void {
       let realizedTaxableGains = 0;
       let taxableIncome = baselineIncome + convAmt;
       const convTax = convAmt > 0 ? (calcProgressiveTax(baselineIncome + convAmt).tax - baselineTax) : 0;
+      let taxesPaidThisYear = baselineTax + convTax;
       let acaSub = !onMedicare ? calcAcaSubsidy(taxableIncome, age).subsidy || 0 : 0;
 
       ira -= convAmt;
@@ -1569,7 +1571,7 @@ function renderConversionOptimizer(): void {
         const ltcgTax = realizedTaxableGains * 0.15;
         taxableCostBasis -= adjustedDraw * (1 - adjustedGainRatio);
         taxable -= adjustedDraw;
-        totalTaxPaid += ltcgTax;
+        taxesPaidThisYear += ltcgTax;
         netCashAfterTaxes += adjustedDraw - ltcgTax;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
@@ -1583,7 +1585,7 @@ function renderConversionOptimizer(): void {
         const draw = Math.min(grossUp, ira);
         const drawTax = draw * effMargRate;
         ira -= draw;
-        totalTaxPaid += drawTax;
+        taxesPaidThisYear += drawTax;
         netCashAfterTaxes += draw - drawTax;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
@@ -1602,7 +1604,7 @@ function renderConversionOptimizer(): void {
 
       if (remaining > 0 && ranOutAge === null) ranOutAge = age;
 
-      totalTaxPaid += convTax;
+      totalTaxPaid += taxesPaidThisYear;
       totalSubsidyReceived += acaSub;
       totalSpent += spentThisYear;
 
@@ -1617,6 +1619,7 @@ function renderConversionOptimizer(): void {
         age,
         convAmt,
         convTax,
+        taxesPaid: taxesPaidThisYear,
         rmd,
         acaSub,
         taxableIncome,
@@ -1710,26 +1713,22 @@ function renderConversionOptimizer(): void {
           <th>Convert</th>
           <th>RMD</th>
           <th>Conv Tax</th>
+          <th>Tax (CVT)</th>
+          <th>Tax (NO)</th>
           <th>ACA Sub</th>
-          <th>Spent (cvt)</th>
-          <th>Spent (no)</th>
-          <th>Cumul Diff</th>
           <th>Wealth (cvt)</th>
           <th>Wealth (no)</th>
         </tr></thead>
         <tbody>${withConv.years.map((y, i) => {
           const n = noConv.years[i];
-          const cumulSpendDiff = withConv.years.slice(0, i + 1).reduce((sum, row) => sum + row.spentThisYear, 0)
-            - noConv.years.slice(0, i + 1).reduce((sum, row) => sum + row.spentThisYear, 0);
           return `<tr class="${y.overCliff ? 'co-cliff' : ''}" style="${y.age === 65 ? 'border-top:2px solid var(--blue);' : ''}${y.age === 73 ? 'border-top:2px solid var(--orange);' : ''}">
             <td>${y.age}${y.onMedicare ? '*' : ''}${y.age >= 73 ? '+' : ''}</td>
             <td style="color:${y.convAmt > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(y.convAmt)}</td>
             <td>$${fmtK(y.rmd)}</td>
             <td style="color:var(--red)">$${fmtK(y.convTax)}</td>
+            <td style="color:var(--red)">$${fmtK(y.taxesPaid)}</td>
+            <td style="color:var(--red)">$${fmtK(n.taxesPaid)}</td>
             <td style="color:${y.acaSub > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(y.acaSub)}</td>
-            <td>$${fmtK(y.spentThisYear)}</td>
-            <td>$${fmtK(n.spentThisYear)}</td>
-            <td style="font-weight:600;color:${cumulSpendDiff >= 0 ? 'var(--accent)' : 'var(--red)'}">${cumulSpendDiff >= 0 ? '+' : ''}$${fmtK(cumulSpendDiff)}</td>
             <td>$${fmtK(y.totalWealth)}</td>
             <td>$${fmtK(n.totalWealth)}</td>
           </tr>`;
