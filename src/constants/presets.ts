@@ -20,7 +20,7 @@ export const PRESETS: Record<string, Preset> = {
     map: {
       ticker: 'Symbol', name: 'Description', shares: 'Quantity',
       price: 'Last Price', costBasis: null, costTotal: 'Cost Basis Total',
-      value: 'Current Value', account: 'Account Name/Number'
+      value: 'Current Value', account: 'Account Number'
     }
   },
   schwab: {
