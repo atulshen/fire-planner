@@ -26,7 +26,7 @@ import {
   createDemoYieldCache,
   holdingsSort,
 } from './state/store';
-import { getInvestmentIncome, getEarnedIncome, getMagi, getHoldingYield, lookupYield, estimateYieldByCategory } from './state/income';
+import { getInvestmentIncome, getMagi, getHoldingYield, lookupYield, estimateYieldByCategory } from './state/income';
 import { renderSummary } from './render/summary';
 import { renderHoldings, setHoldingActions } from './render/holdings';
 import { renderAllocation } from './render/allocation';
@@ -36,8 +36,8 @@ import { renderInvestmentIncome } from './render/investment-income';
 import { renderTaxEfficiency } from './render/tax-efficiency';
 import { renderBrokeragePage } from './render/brokerages';
 import { renderSymbolCatalogPage } from './render/symbol-catalog';
-import { calcAcaSubsidy, estimateBenchmarkPremium, estimateGoldPremium, getAcaCliff } from './calc/aca';
-import { calcFederalIncomeTax, calcProgressiveTax } from './calc/tax';
+import { calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, estimateGoldPremium, getAcaCliff } from './calc/aca';
+import { calcFederalIncomeTax, calcProgressiveTax, getTopOfOrdinaryBracketGrossIncome } from './calc/tax';
 import { getIrmaaSurcharge, getMedicareAnnualCost } from './calc/medicare';
 import { simulateDrawdown, getRmdFactor } from './calc/drawdown';
 import { guessAccountType, guessCategory } from './calc/category';
@@ -64,21 +64,31 @@ const APP_HTML = `
 
 <main>
   <div class="global-bar">
-    <div class="global-age">
-      <label for="globalAge">Your Age</label>
-      <input type="number" id="globalAge" value="50" min="18" max="100">
-    </div>
-    <div class="global-age">
-      <label for="globalBaseIncome">Earned Income</label>
-      <input type="number" id="globalBaseIncome" value="30000" min="0" step="1000" style="width:90px;" title="Non-investment earned income (part-time work, pension, Social Security, etc.)">
-    </div>
-    <div class="page-tabs">
-      <button class="page-tab active" data-page="planner" onclick="switchPage('planner')">Retirement Age</button>
-      <button class="page-tab" data-page="portfolio" onclick="switchPage('portfolio')">Portfolio</button>
-      <button class="page-tab" data-page="brokerages" onclick="switchPage('brokerages')">Brokerages</button>
-      <button class="page-tab" data-page="symbols" onclick="switchPage('symbols')">Symbols</button>
-      <button class="page-tab" data-page="conversion" onclick="switchPage('conversion')">Roth Conversion</button>
-      <button class="page-tab" data-page="healthcare" onclick="switchPage('healthcare')">Healthcare</button>
+    <div class="phase-tabs">
+      <div class="phase-group phase-group-earning">
+        <div class="phase-group-head">
+          <div class="phase-label">Earning Phase</div>
+        </div>
+        <div class="page-tabs">
+          <button class="page-tab active" data-page="planner" onclick="switchPage('planner')">Retirement Age Calculator</button>
+        </div>
+      </div>
+      <div class="phase-group phase-group-retirement">
+        <div class="phase-group-head">
+          <div class="phase-label">Retirement Phase</div>
+          <div class="phase-age-control">
+            <label for="retirementAge">Retirement Age <span class="phase-meta" id="retirementAgeAutoTag">(auto-updated)</span></label>
+            <input type="number" id="retirementAge" value="55" min="18" max="100">
+          </div>
+        </div>
+        <div class="page-tabs">
+          <button class="page-tab" data-page="portfolio" onclick="switchPage('portfolio')">Portfolio</button>
+          <button class="page-tab" data-page="brokerages" onclick="switchPage('brokerages')">Brokerages</button>
+          <button class="page-tab" data-page="symbols" onclick="switchPage('symbols')">Symbols</button>
+          <button class="page-tab" data-page="conversion" onclick="switchPage('conversion')">Roth Conversion</button>
+          <button class="page-tab" data-page="healthcare" onclick="switchPage('healthcare')">Healthcare</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -89,7 +99,7 @@ const APP_HTML = `
   <div class="page-section active" id="pagePlanner">
     <div class="planner-layout">
       <div class="panel">
-        <h2>Retirement Assumptions</h2>
+        <h2>Earning Phase Inputs</h2>
 
         <div class="planner-field">
           <label for="currentAge">Current Age</label>
@@ -137,15 +147,36 @@ const APP_HTML = `
         </div>
 
         <div class="planner-field">
-          <label for="retireExpenses">Retirement Expenses</label>
+          <label for="retireExpenses">Retirement Living Expenses</label>
           <input type="number" id="retireExpenses" value="35000" step="1000">
-          <div class="planner-hint">Expected yearly spending in retirement</div>
+          <div class="planner-hint">Expected yearly non-medical spending in retirement</div>
+        </div>
+
+        <div class="planner-field">
+          <label for="longevityAge">Longevity Age</label>
+          <input type="number" id="longevityAge" value="95" min="50" max="100">
+          <div class="planner-hint">Model how long your assets need to last in retirement. Healthcare is estimated automatically by age.</div>
+        </div>
+
+        <div class="planner-row">
+          <div class="planner-field">
+            <label for="socialSecurityClaimAge">Claim Social Security At</label>
+            <select id="socialSecurityClaimAge">
+              <option value="62">Age 62</option>
+              <option value="67" selected>Age 67</option>
+            </select>
+          </div>
+          <div class="planner-field">
+            <label for="socialSecurityBenefit">Social Security Benefit</label>
+            <input type="number" id="socialSecurityBenefit" value="0" step="1000" min="0">
+            <div class="planner-hint">Annual benefit in today's dollars</div>
+          </div>
         </div>
       </div>
 
       <div class="planner-right-col">
         <div class="panel">
-          <h2>Retirement Age</h2>
+          <h2>Retirement Age Calculator</h2>
           <div id="plannerStatusBadge"></div>
           <div class="planner-results-grid" id="plannerResultsGrid"></div>
 
@@ -235,11 +266,10 @@ const APP_HTML = `
 
     <div class="panel" style="margin-bottom:2rem;">
       <h2>Retirement Drawdown Strategy</h2>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1.25rem;">
+        This drawdown model starts at the Retirement Phase age shown above.
+      </p>
       <div class="dd-controls">
-        <div class="field">
-          <label for="ddRetireAge">Retire Age</label>
-          <input type="number" id="ddRetireAge" value="45" min="25" max="90">
-        </div>
         <div class="field">
           <label for="ddExpenses">Annual Expenses</label>
           <input type="number" id="ddExpenses" value="40000" step="1000">
@@ -299,8 +329,8 @@ const APP_HTML = `
     <div class="panel" style="margin-bottom:2rem;">
       <h2>ACA Healthcare Subsidy Explorer</h2>
       <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1.25rem;">
-        See what you'd pay for ACA marketplace health insurance at every age from early retirement through Medicare at 65.
-        Subsidies depend on your MAGI (Modified Adjusted Gross Income) and your age. MAGI is calculated from your earned income + portfolio investment income.
+        See what you'd pay for ACA marketplace health insurance starting at your Retirement Phase age through Medicare at 65.
+        Subsidies depend on your MAGI (Modified Adjusted Gross Income) and your age. In this retirement view, MAGI is calculated from portfolio investment income only.
       </p>
 
       <div style="display:flex;align-items:baseline;gap:1.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
@@ -655,6 +685,9 @@ const plannerInputIds = [
   'withdrawalRate',
   'taxRate',
   'retireExpenses',
+  'longevityAge',
+  'socialSecurityClaimAge',
+  'socialSecurityBenefit',
 ] as const;
 let activeBrokerageFilter = 'all';
 let editingSymbolTicker: string | null = null;
@@ -732,7 +765,7 @@ function renderPortfolio(): void {
 
 function readPlannerInputs() {
   return {
-    currentAge: readInt('currentAge', readInt('globalAge', 30)),
+    currentAge: readInt('currentAge', 30),
     annualIncome: readFloat('annualIncome', 100000),
     annualExpenses: readFloat('annualExpenses', 40000),
     currentSavings: readFloat('currentSavings', 50000),
@@ -741,6 +774,9 @@ function readPlannerInputs() {
     withdrawalRate: readFloat('withdrawalRate', 4),
     taxRate: readFloat('taxRate', 25),
     retireExpenses: readFloat('retireExpenses', 35000),
+    longevityAge: readInt('longevityAge', 95),
+    socialSecurityClaimAge: readInt('socialSecurityClaimAge', 67),
+    socialSecurityBenefit: readFloat('socialSecurityBenefit', 0),
   };
 }
 
@@ -750,6 +786,35 @@ function persistPlannerInputs(): void {
     return acc;
   }, {});
   localStorage.setItem('fire_planner_inputs', JSON.stringify(payload));
+}
+
+function getPlannerResult() {
+  return calculateFirePlan(readPlannerInputs());
+}
+
+function getDefaultRetirementAge(): number {
+  const plannerResult = getPlannerResult();
+  return plannerResult.fireAge ?? readInt('currentAge', 50);
+}
+
+function setRetirementAgeAutoUpdated(isAutoUpdated: boolean): void {
+  const tag = document.getElementById('retirementAgeAutoTag');
+  if (!tag) return;
+  tag.classList.toggle('is-visible', isAutoUpdated);
+}
+
+function syncRetirementAgeDefault(): void {
+  const input = document.getElementById('retirementAge') as HTMLInputElement | null;
+  if (!input) return;
+
+  const defaultAge = getDefaultRetirementAge();
+  input.value = String(defaultAge);
+  localStorage.setItem('fire_retirement_age', String(defaultAge));
+  setRetirementAgeAutoUpdated(true);
+}
+
+function readRetirementAge(): number {
+  return readInt('retirementAge', getDefaultRetirementAge());
 }
 
 function hydratePlannerInputs(): void {
@@ -764,13 +829,24 @@ function hydratePlannerInputs(): void {
     } catch {
       // Ignore malformed planner state.
     }
+  } else {
+    const savedAge = localStorage.getItem('fire_user_age');
+    if (savedAge) $('currentAge').value = savedAge;
   }
-  $('currentAge').value = $('globalAge').value || $('currentAge').value;
 }
 
-function renderPlanner(forceChart = false): void {
-  const result = calculateFirePlan(readPlannerInputs());
+function renderPlanner(forceChart = false, syncRetirementAge = true): void {
+  const result = getPlannerResult();
+  if (syncRetirementAge) syncRetirementAgeDefault();
   renderPlannerPage(result, forceChart || $('pagePlanner').classList.contains('active'));
+}
+
+function renderRetirementPhase(): void {
+  renderPortfolio();
+  renderBrokerages();
+  renderSymbols();
+  renderConversionOptimizer();
+  renderHealthcare();
 }
 
 function renderBrokerages(): void {
@@ -782,13 +858,9 @@ function renderSymbols(): void {
   renderSymbolRefreshReport();
 }
 
-function renderAll(): void {
-  renderPortfolio();
-  renderBrokerages();
-  renderSymbols();
-  renderConversionOptimizer();
-  renderHealthcare();
-  renderPlanner();
+function renderAll(syncRetirementAge = true): void {
+  renderPlanner(false, syncRetirementAge);
+  renderRetirementPhase();
 }
 
 function setBrokerageFilter(brokerage: string): void {
@@ -848,12 +920,18 @@ function renderSymbolRefreshReport(): void {
 function getHoldingBalances(): {
   taxable: number;
   taxableBasis: number;
+  taxableCash: number;
+  taxableInvested: number;
+  taxableInvestedBasis: number;
   ira: number;
   roth: number;
   hsa: number;
 } {
   let taxable = 0;
   let taxableBasis = 0;
+  let taxableCash = 0;
+  let taxableInvested = 0;
+  let taxableInvestedBasis = 0;
   let ira = 0;
   let roth = 0;
   let hsa = 0;
@@ -864,6 +942,12 @@ function getHoldingBalances(): {
     if (h.account === 'taxable') {
       taxable += value;
       taxableBasis += cost;
+      if (h.category === 'cash') {
+        taxableCash += value;
+      } else {
+        taxableInvested += value;
+        taxableInvestedBasis += cost;
+      }
     } else if (h.account === 'ira') {
       ira += value;
     } else if (h.account === 'roth') {
@@ -873,7 +957,7 @@ function getHoldingBalances(): {
     }
   }
 
-  return { taxable, taxableBasis, ira, roth, hsa };
+  return { taxable, taxableBasis, taxableCash, taxableInvested, taxableInvestedBasis, ira, roth, hsa };
 }
 
 function renderDrawdown(): void {
@@ -883,8 +967,8 @@ function renderDrawdown(): void {
   }
 
   const balances = getHoldingBalances();
-  const currentAge = readInt('globalAge', 50);
-  const retireAge = readInt('ddRetireAge', 45);
+  const retireAge = readRetirementAge();
+  const currentAge = retireAge;
   const expenses = readFloat('ddExpenses', 40000);
   const inflation = readFloat('ddInflation', 3) / 100;
   const growth = readFloat('ddReturn', 5) / 100;
@@ -1118,7 +1202,7 @@ function renderHealthcare(): void {
 }
 
 function renderHcAgeTable(): void {
-  const earned = getEarnedIncome();
+  const earned = 0;
   const inv = getInvestmentIncome();
   const income = earned + inv.total;
   const fplRatio = income / 15650;
@@ -1126,7 +1210,7 @@ function renderHcAgeTable(): void {
 
   $('hcIncomeDisplay').textContent = `$${fmt(Math.round(income))}`;
   $('hcFplDisplay').textContent = `${fmtD(fplRatio * 100, 0)}% FPL`;
-  $('hcMagiBreakdown').textContent = `Earned $${fmt(Math.round(earned))} + Investment $${fmt(Math.round(inv.total))}`;
+  $('hcMagiBreakdown').textContent = `Retirement assumption: $0 earned income + $${fmt(Math.round(inv.total))} investment income`;
 
   if (fplRatio > 4.0) {
     $('hcCliffWarning').innerHTML = `
@@ -1144,7 +1228,7 @@ function renderHcAgeTable(): void {
     $('hcCliffWarning').innerHTML = '';
   }
 
-  const userAge = readInt('globalAge', 50);
+  const userAge = readRetirementAge();
   if (userAge >= 65) {
     $('hcSummaryRow').innerHTML = '<div class="dd-summary-card" style="grid-column:1/-1;"><div class="label">Medicare Eligible</div><div class="value green">Age ' + userAge + '</div><div class="sub">You\'re 65+ — eligible for Medicare. ACA marketplace plans no longer apply.</div></div>';
     $('hcAgeTable').innerHTML = '';
@@ -1173,8 +1257,8 @@ function renderHcAgeTable(): void {
       <td>$${fmt(aca.monthlyGold)}</td>
       <td>$${fmt(aca.goldPremium)}</td>
       <td>$${fmt(aca.monthlyBenchmark)}</td>
-      <td style="color:${aca.eligible ? 'var(--accent)' : 'var(--red)'}">${aca.eligible ? `$${fmt(Math.round(aca.subsidy / 12))}/mo` : 'None'}</td>
-      <td style="color:${aca.eligible ? 'var(--accent)' : 'var(--red)'}">${aca.eligible ? `$${fmt(aca.subsidy)}/yr` : 'None'}</td>
+      <td style="color:${aca.medicaidEligible || aca.eligible ? 'var(--accent)' : 'var(--red)'}">${aca.medicaidEligible ? 'Medicaid' : aca.eligible ? `$${fmt(Math.round(aca.subsidy / 12))}/mo` : 'None'}</td>
+      <td style="color:${aca.medicaidEligible || aca.eligible ? 'var(--accent)' : 'var(--red)'}">${aca.medicaidEligible ? '$0/yr' : aca.eligible ? `$${fmt(aca.subsidy)}/yr` : 'None'}</td>
       <td style="font-weight:600;">$${fmt(Math.round(aca.netPremium / 12))}/mo</td>
       <td style="font-weight:600;">$${fmt(aca.netPremium)}/yr</td>
       <td class="hc-bar-cell">
@@ -1200,7 +1284,7 @@ function renderHcAgeTable(): void {
     <div class="dd-summary-card">
       <div class="label">Your Net at ${sampleAge}</div>
       <div class="value ${sampleAca.eligible ? 'green' : 'red'}">$${fmt(Math.round(sampleAca.netPremium / 12))}/mo</div>
-      <div class="sub">${sampleAca.eligible ? `Subsidy covers $${fmt(Math.round(sampleAca.subsidy / 12))}/mo` : 'No subsidy — full price'}</div>
+      <div class="sub">${sampleAca.medicaidEligible ? 'Modeled as Medicaid with $0 medical cost' : sampleAca.eligible ? `Subsidy covers $${fmt(Math.round(sampleAca.subsidy / 12))}/mo` : 'No subsidy — full price'}</div>
     </div>
     <div class="dd-summary-card">
       <div class="label">Now to Medicare Cost</div>
@@ -1246,7 +1330,7 @@ function renderHcAgeTable(): void {
 }
 
 function renderHcIncomeTable(): void {
-  const age = Math.min(readInt('globalAge', 50), 64);
+  const age = Math.min(readRetirementAge(), 64);
   const incomes = [15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000, 55000, 60000, 62000, 62600, 63000, 65000, 70000, 80000, 100000, 120000];
   const goldMonthly = estimateGoldPremium(age);
   const goldAnnual = goldMonthly * 12;
@@ -1269,12 +1353,12 @@ function renderHcIncomeTable(): void {
             <td>$${fmt(inc)}</td>
             <td>${fplPct}%</td>
             <td>$${fmt(goldMonthly)}/mo</td>
-            <td style="color:${aca.eligible ? 'var(--accent)' : 'var(--red)'}">${aca.eligible ? `$${fmt(Math.round(aca.subsidy / 12))}/mo ($${fmt(aca.subsidy)}/yr)` : 'No subsidy'}</td>
-            <td style="font-weight:700;${!aca.eligible ? 'color:var(--red);' : ''}">$${fmt(Math.round(aca.netPremium / 12))}/mo</td>
+            <td style="color:${aca.medicaidEligible || aca.eligible ? 'var(--accent)' : 'var(--red)'}">${aca.medicaidEligible ? 'Medicaid' : aca.eligible ? `$${fmt(Math.round(aca.subsidy / 12))}/mo ($${fmt(aca.subsidy)}/yr)` : 'No subsidy'}</td>
+            <td style="font-weight:700;${!aca.eligible && !aca.medicaidEligible ? 'color:var(--red);' : ''}">$${fmt(Math.round(aca.netPremium / 12))}/mo</td>
             <td style="font-weight:600;">$${fmt(aca.netPremium)}/yr</td>
             <td class="hc-bar-cell">
               <div class="hc-bar-bg">
-                <div class="hc-bar-fill" style="width:100%;background:${aca.eligible ? 'var(--muted)' : 'var(--red)'};opacity:0.3;"></div>
+                <div class="hc-bar-fill" style="width:100%;background:${aca.medicaidEligible || aca.eligible ? 'var(--muted)' : 'var(--red)'};opacity:0.3;"></div>
                 <div class="hc-bar-fill" style="width:${subsidyBarPct}%;background:var(--accent);margin-top:-8px;"></div>
               </div>
             </td>
@@ -1290,7 +1374,7 @@ function renderHcIncomeTable(): void {
 }
 
 function renderMedicareProjection(): void {
-  const userAge = readInt('globalAge', 50);
+  const userAge = readRetirementAge();
   const lifeExp = readInt('coLifeExp', 90);
   const magi = getMagi() || 30000;
   const inflation = 0.03;
@@ -1434,19 +1518,20 @@ function renderMedicareProjection(): void {
 
 function renderConversionOptimizer(): void {
   const portfolioBalances = getHoldingBalances();
-  const startAge = readInt('globalAge', 50);
+  const startAge = readRetirementAge();
   const lifeExp = readInt('coLifeExp', 90);
-  const earnedIncome = getEarnedIncome();
+  const earnedIncome = 0;
   const annualSpending = readFloat('coSpending', 50000);
   const inflation = readFloat('inflationRate', 3) / 100;
   const healthcareInflation = 0.03;
   const iraBalance = portfolioBalances.ira;
   const taxableBal = portfolioBalances.taxable;
-  const taxableBasis = portfolioBalances.taxableBasis;
+  const taxableCashBal = portfolioBalances.taxableCash;
+  const taxableInvestedBal = portfolioBalances.taxableInvested;
+  const taxableBasis = portfolioBalances.taxableInvestedBasis;
   const rothBal = portfolioBalances.roth + portfolioBalances.hsa;
   const ssIncome = readFloat('coSSIncome', 20000);
   const strategy = $('coStrategy').value;
-  const cliffAmt = getAcaCliff();
   const convEndAge = 72;
   const taxableGrowth = estimateAccountReturn(holdings, ['taxable'], yieldCache) / 100;
   const iraGrowth = estimateAccountReturn(holdings, ['ira'], yieldCache) / 100;
@@ -1465,31 +1550,41 @@ function renderConversionOptimizer(): void {
     return;
   }
 
-  $('coAssumptions').textContent = `Using current holdings automatically. Estimated annual returns by account mix: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies with ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA.`;
+  $('coAssumptions').textContent = `Using current holdings automatically. Retirement earned income is assumed to be $0. Estimated annual returns by account mix: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies with ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA. Taxable cash is spent before selling appreciated taxable assets.`;
 
   if (startAge >= lifeExp) {
     $('coResults').innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">Life expectancy must be greater than current age.</div></div>';
     return;
   }
 
-  function getConversionAmount(currentAge: number, currentIraBal: number, strat: string, baselineIncome: number): number {
+  function getConversionAmount(
+    currentAge: number,
+    currentIraBal: number,
+    strat: string,
+    baselineIncome: number,
+    yearsFromStart: number,
+    expectedCapitalGains = 0,
+  ): number {
     if (currentAge > convEndAge || currentIraBal <= 0) return 0;
+    const acaCliff = getAcaCliff(yearsFromStart, inflation);
+    const topOf12GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.12, yearsFromStart, inflation);
+    const topOf22GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.22, yearsFromStart, inflation);
     if (strat === 'aca_safe') {
-      if (currentAge < 65) return Math.min(Math.max(cliffAmt - baselineIncome - 1000, 0), currentIraBal);
-      return Math.min(Math.max(105700 + 16100 - baselineIncome, 0), currentIraBal);
+      if (currentAge < 65) return Math.min(Math.max(acaCliff - baselineIncome - expectedCapitalGains - 1000, 0), currentIraBal);
+      return Math.min(Math.max(topOf22GrossIncome - baselineIncome, 0), currentIraBal);
     }
-    if (strat === 'fill_12') return Math.min(Math.max(50400 + 16100 - baselineIncome, 0), currentIraBal);
-    if (strat === 'fill_22') return Math.min(Math.max(105700 + 16100 - baselineIncome, 0), currentIraBal);
+    if (strat === 'fill_12') return Math.min(Math.max(topOf12GrossIncome - baselineIncome, 0), currentIraBal);
+    if (strat === 'fill_22') return Math.min(Math.max(topOf22GrossIncome - baselineIncome, 0), currentIraBal);
     if (strat === 'maximize') {
       let bestAmt = 0;
       const step = 5000;
       const maxAmt = Math.min(currentIraBal, 300000);
-      const acaBase = currentAge < 65 ? calcAcaSubsidy(baselineIncome, currentAge) : null;
-      const baseTaxAmt = calcProgressiveTax(baselineIncome).tax;
+      const acaBase = currentAge < 65 ? calcAcaSubsidyForYear(baselineIncome, currentAge, yearsFromStart, inflation) : null;
+      const baseTaxAmt = calcProgressiveTax(baselineIncome, yearsFromStart, inflation).tax;
       for (let amt = step; amt <= maxAmt; amt += step) {
         const magi = baselineIncome + amt;
-        const tax = calcProgressiveTax(magi).tax - baseTaxAmt;
-        const aca = currentAge < 65 ? calcAcaSubsidy(magi, currentAge) : null;
+        const tax = calcProgressiveTax(magi, yearsFromStart, inflation).tax - baseTaxAmt;
+        const aca = currentAge < 65 ? calcAcaSubsidyForYear(magi, currentAge, yearsFromStart, inflation) : null;
         const subLost = (acaBase?.subsidy || 0) - (aca?.subsidy || 0);
         const effRate = (tax + subLost) / amt;
         if (effRate < 0.30) bestAmt = amt;
@@ -1506,11 +1601,10 @@ function renderConversionOptimizer(): void {
     }
 
     const inflationFactor = Math.pow(1 + healthcareInflation, yearsFromStart);
-    const annualPremium = estimateGoldPremium(age) * 12 * inflationFactor;
-    const aca = calcAcaSubsidy(magi, age);
-    const acaSub = (aca.subsidy || 0) * inflationFactor;
+    const aca = calcAcaSubsidyForYear(magi, age, yearsFromStart, inflation);
+    const acaSub = aca.medicaidEligible ? 0 : (aca.subsidy || 0) * inflationFactor;
     return {
-      annualCost: Math.max(annualPremium - acaSub, 0),
+      annualCost: aca.netPremium * inflationFactor,
       acaSub,
     };
   }
@@ -1537,11 +1631,13 @@ function renderConversionOptimizer(): void {
     let ira = iraBalance;
     let rothExisting = rothBal;
     let rothConverted = 0;
-    let taxable = taxableBal;
+    let taxableCash = taxableCashBal;
+    let taxableInvested = taxableInvestedBal;
     let taxableCostBasis = taxableBasis;
     let totalTaxPaid = 0;
     let totalSubsidyReceived = 0;
-    let totalSpent = 0;
+    let totalFundedExpenses = 0;
+    let totalHealthcarePaid = 0;
     let ranOutAge: number | null = null;
     const years: Array<{
       age: number;
@@ -1551,7 +1647,17 @@ function renderConversionOptimizer(): void {
       taxesPaid: number;
       rmd: number;
       acaSub: number;
+      acaCliff: number;
       taxableIncome: number;
+      baseSpending: number;
+      healthcareCost: number;
+      expensesNeed: number;
+      yieldFunding: number;
+      ssFunding: number;
+      rmdFunding: number;
+      taxableFunding: number;
+      iraFunding: number;
+      rothFunding: number;
       spentThisYear: number;
       ira: number;
       roth: number;
@@ -1564,28 +1670,48 @@ function renderConversionOptimizer(): void {
     for (let age = startAge; age < lifeExp; age++) {
       const yearsFromStart = age - startAge;
       const inflatedSpending = annualSpending * Math.pow(1 + inflation, yearsFromStart);
-      const ssThisYear = age >= 67 ? ssIncome : 0;
+      const ssThisYear = age >= 67 ? ssIncome * Math.pow(1 + inflation, age - startAge) : 0;
       const onMedicare = age >= 65;
+      const acaCliff = getAcaCliff(yearsFromStart, inflation);
       let rmd = 0;
       if (age >= 73) {
         const factor = getRmdFactor(age) || 10;
         rmd = ira / factor;
       }
 
+      const taxable = taxableCash + taxableInvested;
       const recurringTaxableIncome = taxable * taxableYield;
       const baselineIncome = earnedIncome + recurringTaxableIncome + ssThisYear + rmd;
-      const baselineTax = calcFederalIncomeTax(baselineIncome, 0).totalTax;
+      const baselineTax = calcFederalIncomeTax(baselineIncome, 0, yearsFromStart, inflation).totalTax;
       const baselineAfterTaxCash = baselineIncome - baselineTax;
-      const convAmt = doConvert ? getConversionAmount(age, ira, strategy, baselineIncome) : 0;
+      const taxableGainRatio = taxableInvested > 0 ? Math.max(0, 1 - taxableCostBasis / taxableInvested) : 0;
+      const baselineHealthcare = estimateAnnualHealthcareCost(age, yearsFromStart, baselineIncome).annualCost;
+      const baselineShortfall = Math.max(inflatedSpending + baselineHealthcare - baselineAfterTaxCash, 0);
+      const estimatedCashDraw = Math.min(baselineShortfall, taxableCash);
+      const estimatedInvestedNeed = Math.max(baselineShortfall - estimatedCashDraw, 0);
+      const estimatedTaxableDraw = Math.min(estimatedInvestedNeed / Math.max(1 - taxableGainRatio * 0.15, 0.01), taxableInvested);
+      const expectedCapitalGains = estimatedTaxableDraw * taxableGainRatio;
+      const convAmt = doConvert ? getConversionAmount(age, ira, strategy, baselineIncome, yearsFromStart, expectedCapitalGains) : 0;
       let ordinaryIncome = baselineIncome + convAmt;
       let realizedTaxableGains = 0;
       let iraSpendingDraw = 0;
       let taxableIncome = ordinaryIncome;
-      let currentTax = calcFederalIncomeTax(ordinaryIncome, 0).totalTax;
+      let currentTax = calcFederalIncomeTax(ordinaryIncome, 0, yearsFromStart, inflation).totalTax;
       const convTax = currentTax - baselineTax;
       let taxesPaidThisYear = currentTax;
       let healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, taxableIncome);
       let acaSub = healthcare.acaSub;
+      const baselineFundingAvailable = Math.max(baselineAfterTaxCash - convTax, 0);
+      const rmdShareOfBaselineIncome = baselineIncome > 0 ? rmd / baselineIncome : 0;
+      const ssFundingAvailable = baselineIncome > 0
+        ? baselineFundingAvailable * (ssThisYear / baselineIncome)
+        : 0;
+      const rmdFundingAvailable = baselineIncome > 0
+        ? baselineFundingAvailable * rmdShareOfBaselineIncome
+        : 0;
+      let taxableFunding = 0;
+      let iraFunding = 0;
+      let rothFunding = 0;
 
       ira -= convAmt;
       rothConverted += convAmt;
@@ -1596,16 +1722,25 @@ function renderConversionOptimizer(): void {
       let spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
       let remaining = Math.max(spendingNeed - netCashAfterTaxes, 0);
 
-      if (remaining > 0 && taxable > 0) {
-        const gainRatio = taxable > 0 ? Math.max(0, 1 - taxableCostBasis / taxable) : 0;
+      if (remaining > 0 && taxableCash > 0) {
+        const cashDraw = Math.min(remaining, taxableCash);
+        taxableCash -= cashDraw;
+        taxableFunding += cashDraw;
+        netCashAfterTaxes += cashDraw;
+        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+        remaining = spendingNeed - spentThisYear;
+      }
+
+      if (remaining > 0 && taxableInvested > 0) {
+        const gainRatio = taxableInvested > 0 ? Math.max(0, 1 - taxableCostBasis / taxableInvested) : 0;
         const taxBeforeTaxable = currentTax;
         let adjustedDraw = 0;
 
         for (let i = 0; i < 3; i++) {
           const neededNet = Math.max(spendingNeed - netCashAfterTaxes, 0);
-          adjustedDraw = solveGrossWithdrawal(taxable, neededNet, (gross) => {
+          adjustedDraw = solveGrossWithdrawal(taxableInvested, neededNet, (gross) => {
             const gains = gross * gainRatio;
-            const taxAfter = calcFederalIncomeTax(ordinaryIncome, gains).totalTax;
+            const taxAfter = calcFederalIncomeTax(ordinaryIncome, gains, yearsFromStart, inflation).totalTax;
             return gross - (taxAfter - taxBeforeTaxable);
           });
 
@@ -1621,43 +1756,57 @@ function renderConversionOptimizer(): void {
           spendingNeed = updatedSpendingNeed;
         }
 
-        const taxAfterTaxable = calcFederalIncomeTax(ordinaryIncome, realizedTaxableGains).totalTax;
+        const taxAfterTaxable = calcFederalIncomeTax(ordinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
         const ltcgTax = taxAfterTaxable - taxBeforeTaxable;
         taxableCostBasis -= adjustedDraw * (1 - gainRatio);
-        taxable -= adjustedDraw;
+        taxableInvested -= adjustedDraw;
         currentTax = taxAfterTaxable;
         taxesPaidThisYear = currentTax;
+        taxableFunding += adjustedDraw - ltcgTax;
         netCashAfterTaxes += adjustedDraw - ltcgTax;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
         taxableIncome = ordinaryIncome + realizedTaxableGains;
       }
 
+      let roth = rothExisting + rothConverted;
+      if (remaining > 0 && strategy === 'aca_safe' && age < 65 && roth > 0) {
+        const draw = Math.min(remaining, roth);
+        const fromConverted = Math.min(draw, rothConverted);
+        rothConverted -= fromConverted;
+        rothExisting -= (draw - fromConverted);
+        rothFunding += draw;
+        netCashAfterTaxes += draw;
+        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+        remaining = spendingNeed - spentThisYear;
+      }
+
       if (remaining > 0 && ira > 0) {
         const taxBeforeIra = currentTax;
         const draw = solveGrossWithdrawal(ira, remaining, (gross) => {
-          const taxAfter = calcFederalIncomeTax(ordinaryIncome + gross, realizedTaxableGains).totalTax;
+          const taxAfter = calcFederalIncomeTax(ordinaryIncome + gross, realizedTaxableGains, yearsFromStart, inflation).totalTax;
           return gross - (taxAfter - taxBeforeIra);
         });
-        const taxAfterIra = calcFederalIncomeTax(ordinaryIncome + draw, realizedTaxableGains).totalTax;
+        const taxAfterIra = calcFederalIncomeTax(ordinaryIncome + draw, realizedTaxableGains, yearsFromStart, inflation).totalTax;
         const drawTax = taxAfterIra - taxBeforeIra;
         ira -= draw;
         iraSpendingDraw = draw;
         ordinaryIncome += draw;
         currentTax = taxAfterIra;
         taxesPaidThisYear = currentTax;
+        iraFunding += draw - drawTax;
         netCashAfterTaxes += draw - drawTax;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
         taxableIncome = ordinaryIncome + realizedTaxableGains;
       }
 
-      let roth = rothExisting + rothConverted;
       if (remaining > 0 && roth > 0) {
         const draw = Math.min(remaining, roth);
         const fromConverted = Math.min(draw, rothConverted);
         rothConverted -= fromConverted;
         rothExisting -= (draw - fromConverted);
+        rothFunding += draw;
         netCashAfterTaxes += draw;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
         remaining = spendingNeed - spentThisYear;
@@ -1665,102 +1814,230 @@ function renderConversionOptimizer(): void {
 
       if (remaining > 0 && ranOutAge === null) ranOutAge = age;
 
+      const cashSurplus = Math.max(netCashAfterTaxes - spentThisYear, 0);
+      if (cashSurplus > 0) {
+        taxableCash += cashSurplus;
+      }
+
+      const healthcarePaidThisYear = Math.min(spendingNeed - inflatedSpending, spentThisYear);
+
       totalTaxPaid += taxesPaidThisYear;
       totalSubsidyReceived += acaSub;
-      totalSpent += spentThisYear;
+      totalFundedExpenses += spentThisYear;
+      totalHealthcarePaid += healthcarePaidThisYear;
+      const totalBaselineFunding = Math.max(
+        Math.min(spentThisYear - taxableFunding - iraFunding - rothFunding, baselineFundingAvailable),
+        0,
+      );
+      const ssFunding = Math.max(Math.min(totalBaselineFunding, ssFundingAvailable), 0);
+      const rmdFunding = Math.max(Math.min(totalBaselineFunding - ssFunding, rmdFundingAvailable), 0);
+      const yieldFunding = Math.max(totalBaselineFunding - ssFunding - rmdFunding, 0);
 
       ira = Math.max(ira, 0) * (1 + iraGrowth);
       rothExisting = Math.max(rothExisting, 0) * (1 + rothGrowth);
       rothConverted = Math.max(rothConverted, 0) * (1 + iraGrowth);
-      taxable = Math.max(taxable, 0) * (1 + taxableGrowth);
+      taxableCash = Math.max(taxableCash, 0) * (1 + taxableGrowth);
+      taxableInvested = Math.max(taxableInvested, 0) * (1 + taxableGrowth);
       taxableCostBasis = Math.max(taxableCostBasis, 0) * (1 + taxableGrowth * 0.3);
       roth = rothExisting + rothConverted;
+      const endingTaxable = taxableCash + taxableInvested;
 
       years.push({
         age,
         convAmt,
-        scenarioIncome: convAmt + realizedTaxableGains + iraSpendingDraw,
+        scenarioIncome: taxableIncome,
         convTax,
         taxesPaid: taxesPaidThisYear,
         rmd,
         acaSub,
+        acaCliff,
         taxableIncome,
+        baseSpending: inflatedSpending,
+        healthcareCost: healthcare.annualCost,
+        expensesNeed: spendingNeed,
+        yieldFunding,
+        ssFunding,
+        rmdFunding,
+        taxableFunding,
+        iraFunding,
+        rothFunding,
         spentThisYear,
         ira,
         roth,
-        taxable,
-        totalWealth: ira + roth + taxable,
+        taxable: endingTaxable,
+        totalWealth: ira + roth + endingTaxable,
         onMedicare,
-        overCliff: !onMedicare && taxableIncome > cliffAmt,
+        overCliff: !onMedicare && taxableIncome > acaCliff,
       });
     }
 
-    return { years, totalTaxPaid, totalSubsidyReceived, totalSpent, ranOutAge };
+    const endOfLifeWealth = years.length > 0 ? years[years.length - 1].totalWealth : ira + rothExisting + rothConverted + taxableCash + taxableInvested;
+    return {
+      years,
+      totalTaxPaid,
+      totalSubsidyReceived,
+      totalFundedExpenses,
+      totalHealthcarePaid,
+      ranOutAge,
+      endOfLifeWealth,
+    };
   }
 
   const withConv = simulateLifetime(true);
   const noConv = simulateLifetime(false);
-  const spendingDiff = withConv.totalSpent - noConv.totalSpent;
+  const fundedExpenseDiff = withConv.totalFundedExpenses - noConv.totalFundedExpenses;
+  const healthcareDiff = withConv.totalHealthcarePaid - noConv.totalHealthcarePaid;
   const taxDiff = withConv.totalTaxPaid - noConv.totalTaxPaid;
   const subsidyDiff = withConv.totalSubsidyReceived - noConv.totalSubsidyReceived;
-  const isWorthIt = spendingDiff > 0;
+  const wealthDiff = withConv.endOfLifeWealth - noConv.endOfLifeWealth;
+  const isWorthIt = wealthDiff > 0;
 
   const strategyDesc: Record<string, string> = {
     aca_safe: 'Stays below the ACA cliff (400% FPL) before 65, then fills 22% bracket.',
-    fill_12: 'Fills the 12% tax bracket ($66,500 MAGI) each year.',
-    fill_22: 'Fills the 22% tax bracket ($121,800 MAGI) each year.',
+    fill_12: 'Fills the 12% tax bracket each year using inflation-adjusted thresholds.',
+    fill_22: 'Fills the 22% tax bracket each year using inflation-adjusted thresholds.',
     maximize: 'Converts as much as possible while effective rate stays under 30%.',
   };
 
+  function formatFunding(year: {
+    yieldFunding: number;
+    ssFunding: number;
+    rmdFunding: number;
+    taxableFunding: number;
+    iraFunding: number;
+    rothFunding: number;
+  }): string {
+    const fmtCoMoney = (amount: number): string => {
+      const abs = Math.abs(amount);
+      if (abs > 0 && abs < 1000) return `${amount < 0 ? '-<$1k' : '<$1k'}`;
+      return `${amount < 0 ? '-$' : '$'}${fmtK(abs)}`;
+    };
+
+    const parts: string[] = [];
+    if (year.ssFunding > 1) parts.push(`SS ${fmtCoMoney(year.ssFunding)}`);
+    if (year.rmdFunding > 1) parts.push(`RMD ${fmtCoMoney(year.rmdFunding)}`);
+    if (year.yieldFunding > 1) parts.push(`Yield ${fmtCoMoney(year.yieldFunding)}`);
+    if (year.taxableFunding > 1) parts.push(`Taxable ${fmtCoMoney(year.taxableFunding)}`);
+    if (year.iraFunding > 1) parts.push(`IRA ${fmtCoMoney(year.iraFunding)}`);
+    if (year.rothFunding > 1) parts.push(`Roth ${fmtCoMoney(year.rothFunding)}`);
+    return parts.length > 0 ? parts.join('<br>') : '—';
+  }
+
+  function fmtCoMoney(amount: number): string {
+    const abs = Math.abs(amount);
+    if (abs > 0 && abs < 1000) return `${amount < 0 ? '-<$1k' : '<$1k'}`;
+    return `${amount < 0 ? '-$' : '$'}${fmtK(abs)}`;
+  }
+
+  function renderScenarioTable(
+    title: string,
+    result: typeof withConv,
+  ): string {
+    return `
+      <div class="te-section-title" style="margin-top:1rem;">${title}</div>
+      <div style="max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
+        <table class="co-sweep-table">
+          <thead><tr>
+            <th style="text-align:left">Age</th>
+            <th>Convert</th>
+            <th>Taxable Income</th>
+            <th>ACA Cliff</th>
+            <th>Base Spending</th>
+            <th>Healthcare</th>
+            <th>Expenses</th>
+            <th>RMD</th>
+            <th>Conv Tax</th>
+            <th>Total Tax</th>
+            <th>ACA Sub</th>
+            <th>Funding</th>
+            <th>IRA</th>
+            <th>Roth</th>
+            <th>Taxable</th>
+            <th>Wealth</th>
+          </tr></thead>
+          <tbody>${result.years.map((year) => `
+            <tr class="${year.overCliff ? 'co-cliff' : ''}" style="${year.age === 65 ? 'border-top:2px solid var(--blue);' : ''}${year.age === 73 ? 'border-top:2px solid var(--orange);' : ''}">
+              <td>${year.age}${year.onMedicare ? '*' : ''}${year.age >= 73 ? '+' : ''}</td>
+              <td style="color:${year.convAmt > 0 ? 'var(--accent)' : 'var(--muted)'}">${fmtCoMoney(year.convAmt)}</td>
+              <td>${fmtCoMoney(year.scenarioIncome)}</td>
+              <td>${fmtCoMoney(year.acaCliff)}</td>
+              <td>${fmtCoMoney(year.baseSpending)}</td>
+              <td>${fmtCoMoney(year.healthcareCost)}</td>
+              <td>${fmtCoMoney(year.expensesNeed)}</td>
+              <td>${fmtCoMoney(year.rmd)}</td>
+              <td style="color:var(--red)">${fmtCoMoney(year.convTax)}</td>
+              <td style="color:var(--red)">${fmtCoMoney(year.taxesPaid)}</td>
+              <td style="color:${year.acaSub > 0 ? 'var(--accent)' : 'var(--muted)'}">${fmtCoMoney(year.acaSub)}</td>
+              <td>${formatFunding(year)}</td>
+              <td>${fmtCoMoney(year.ira)}</td>
+              <td>${fmtCoMoney(year.roth)}</td>
+              <td>${fmtCoMoney(year.taxable)}</td>
+              <td>${fmtCoMoney(year.totalWealth)}</td>
+            </tr>
+          `).join('')}</tbody>
+        </table>
+      </div>`;
+  }
+
   $('coResults').innerHTML = `
-    <div class="co-optimal-callout ${isWorthIt ? 'positive' : spendingDiff < -5000 ? 'negative' : 'neutral'}">
-      <div class="co-optimal-title" style="color:${isWorthIt ? 'var(--accent)' : spendingDiff < -1000 ? 'var(--red)' : 'var(--text)'}">
-        Converting gives you ${isWorthIt ? '+' : ''}$${fmt(Math.round(spendingDiff))} more spendable money over your lifetime
+    <div class="co-optimal-callout ${isWorthIt ? 'positive' : wealthDiff < -5000 ? 'negative' : 'neutral'}">
+      <div class="co-optimal-title" style="color:${isWorthIt ? 'var(--accent)' : wealthDiff < -1000 ? 'var(--red)' : 'var(--text)'}">
+        Converting leaves you ${wealthDiff > 0 ? '+' : ''}${fmtCoMoney(wealthDiff)} more end-of-life wealth
       </div>
       <div class="co-optimal-sub">
-        With conversions: $${fmtK(withConv.totalSpent)} total spending, $${fmtK(withConv.totalTaxPaid)} total tax.
-        Without: $${fmtK(noConv.totalSpent)} spending, $${fmtK(noConv.totalTaxPaid)} tax.
-        ${subsidyDiff < -1000 ? `You lose $${fmtK(Math.abs(subsidyDiff))} in ACA subsidies, but ` : ''}
+        With conversions: ${fmtCoMoney(withConv.endOfLifeWealth)} ending wealth, ${fmtCoMoney(withConv.totalTaxPaid)} tax, ${fmtCoMoney(withConv.totalHealthcarePaid)} healthcare paid.
+        Without: ${fmtCoMoney(noConv.endOfLifeWealth)} ending wealth, ${fmtCoMoney(noConv.totalTaxPaid)} tax, ${fmtCoMoney(noConv.totalHealthcarePaid)} healthcare paid.
+        ${subsidyDiff < -1000 ? `You lose ${fmtCoMoney(Math.abs(subsidyDiff))} in ACA subsidies, but ` : ''}
         ${isWorthIt ? 'the tax-free Roth growth more than makes up for it.' : 'the upfront costs outweigh the benefits.'}
       </div>
     </div>
     <div class="co-result-grid">
       <div class="co-cost-stack">
         <h4>With Conversions</h4>
-        <div class="co-line"><span class="label">Total converted to Roth</span><span class="val">$${fmtK(withConv.years.reduce((sum, y) => sum + y.convAmt, 0))}</span></div>
-        <div class="co-line"><span class="label">Total taxes paid (lifetime)</span><span class="val red">$${fmt(Math.round(withConv.totalTaxPaid))}</span></div>
-        <div class="co-line"><span class="label">ACA subsidies received</span><span class="val green">$${fmt(Math.round(withConv.totalSubsidyReceived))}</span></div>
-        <div class="co-line total"><span class="label">Total after-tax spending</span><span class="val ${isWorthIt ? 'green' : ''}" style="font-size:1.05rem;">$${fmtK(withConv.totalSpent)}</span></div>
+        <div class="co-line"><span class="label">Total converted to Roth</span><span class="val">${fmtCoMoney(withConv.years.reduce((sum, y) => sum + y.convAmt, 0))}</span></div>
+        <div class="co-line"><span class="label">Total taxes paid (lifetime)</span><span class="val red">${fmtCoMoney(withConv.totalTaxPaid)}</span></div>
+        <div class="co-line"><span class="label">ACA subsidies received</span><span class="val green">${fmtCoMoney(withConv.totalSubsidyReceived)}</span></div>
+        <div class="co-line"><span class="label">Healthcare paid</span><span class="val">${fmtCoMoney(withConv.totalHealthcarePaid)}</span></div>
+        <div class="co-line total"><span class="label">End-of-life wealth</span><span class="val ${isWorthIt ? 'green' : ''}" style="font-size:1.05rem;">${fmtCoMoney(withConv.endOfLifeWealth)}</span></div>
         ${withConv.ranOutAge ? `<div class="co-line"><span class="label">Money runs out</span><span class="val red">Age ${withConv.ranOutAge}</span></div>` : ''}
       </div>
       <div class="co-cost-stack">
         <h4>Without Conversions</h4>
         <div class="co-line"><span class="label">Total converted to Roth</span><span class="val">$0</span></div>
-        <div class="co-line"><span class="label">Total taxes paid (lifetime)</span><span class="val red">$${fmt(Math.round(noConv.totalTaxPaid))}</span></div>
-        <div class="co-line"><span class="label">ACA subsidies received</span><span class="val green">$${fmt(Math.round(noConv.totalSubsidyReceived))}</span></div>
-        <div class="co-line total"><span class="label">Total after-tax spending</span><span class="val ${!isWorthIt ? 'green' : ''}" style="font-size:1.05rem;">$${fmtK(noConv.totalSpent)}</span></div>
+        <div class="co-line"><span class="label">Total taxes paid (lifetime)</span><span class="val red">${fmtCoMoney(noConv.totalTaxPaid)}</span></div>
+        <div class="co-line"><span class="label">ACA subsidies received</span><span class="val green">${fmtCoMoney(noConv.totalSubsidyReceived)}</span></div>
+        <div class="co-line"><span class="label">Healthcare paid</span><span class="val">${fmtCoMoney(noConv.totalHealthcarePaid)}</span></div>
+        <div class="co-line total"><span class="label">End-of-life wealth</span><span class="val ${!isWorthIt ? 'green' : ''}" style="font-size:1.05rem;">${fmtCoMoney(noConv.endOfLifeWealth)}</span></div>
         ${noConv.ranOutAge ? `<div class="co-line"><span class="label">Money runs out</span><span class="val red">Age ${noConv.ranOutAge}</span></div>` : ''}
       </div>
     </div>
     <div class="co-result-grid" style="margin-top:0;">
       <div class="co-cost-stack" style="background:${isWorthIt ? 'var(--accent-dim)' : '#7f1d1d'};border-color:${isWorthIt ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};">
         <div class="co-line" style="border:none;font-size:0.95rem;">
-          <span class="label" style="color:var(--text);font-weight:700;">Difference in spendable money</span>
-          <span class="val" style="font-size:1.1rem;color:${isWorthIt ? 'var(--accent)' : 'var(--red)'}">${spendingDiff >= 0 ? '+' : ''}$${fmt(Math.round(spendingDiff))}</span>
+          <span class="label" style="color:var(--text);font-weight:700;">Difference in end-of-life wealth</span>
+          <span class="val" style="font-size:1.1rem;color:${isWorthIt ? 'var(--accent)' : 'var(--red)'}">${wealthDiff >= 0 ? '+' : ''}${fmtCoMoney(wealthDiff)}</span>
         </div>
       </div>
       <div class="co-cost-stack">
         <div class="co-line" style="border:none;font-size:0.85rem;">
+          <span class="label">Healthcare paid difference</span>
+          <span class="val" style="color:${healthcareDiff <= 0 ? 'var(--accent)' : 'var(--red)'}">${healthcareDiff >= 0 ? '+' : ''}${fmtCoMoney(healthcareDiff)}</span>
+        </div>
+        <div class="co-line" style="border:none;font-size:0.85rem;">
           <span class="label">Tax difference</span>
-          <span class="val" style="color:${taxDiff > 0 ? 'var(--red)' : 'var(--accent)'}">${taxDiff > 0 ? '+' : ''}$${fmt(Math.round(taxDiff))}</span>
+          <span class="val" style="color:${taxDiff > 0 ? 'var(--red)' : 'var(--accent)'}">${taxDiff > 0 ? '+' : ''}${fmtCoMoney(taxDiff)}</span>
         </div>
         <div class="co-line" style="border:none;font-size:0.85rem;">
           <span class="label">Subsidy difference</span>
-          <span class="val" style="color:${subsidyDiff < 0 ? 'var(--red)' : 'var(--accent)'}">${subsidyDiff >= 0 ? '+' : ''}$${fmt(Math.round(subsidyDiff))}</span>
+          <span class="val" style="color:${subsidyDiff < 0 ? 'var(--red)' : 'var(--accent)'}">${subsidyDiff >= 0 ? '+' : ''}${fmtCoMoney(subsidyDiff)}</span>
+        </div>
+        <div class="co-line" style="border:none;font-size:0.85rem;">
+          <span class="label">End-of-life wealth difference</span>
+          <span class="val" style="color:${wealthDiff >= 0 ? 'var(--accent)' : 'var(--red)'}">${wealthDiff >= 0 ? '+' : ''}${fmtCoMoney(wealthDiff)}</span>
         </div>
       </div>
     </div>
-    <div class="te-section-title">Year-by-Year Comparison: Convert vs Don't Convert</div>
+    <div class="te-section-title">Year-by-Year Scenarios</div>
     <p style="font-size:0.8rem;color:var(--muted);margin-bottom:0.75rem;">
       ${strategyDesc[strategy]}
       Both scenarios start with $${fmt(annualSpending)}/yr spending, inflated ${fmtD(inflation * 100, 1)}% annually, plus healthcare costs.
@@ -1768,41 +2045,8 @@ function renderConversionOptimizer(): void {
       Growth assumptions are inferred from your current holdings by account rather than a manual growth-rate input.
       <br>* = Medicare (65+). + = RMDs begin (73+).
     </p>
-    <div style="max-height:600px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
-      <table class="co-sweep-table">
-        <thead><tr>
-          <th style="text-align:left">Age</th>
-          <th>Convert</th>
-          <th>Income (CVT)</th>
-          <th>Income (NO)</th>
-          <th>RMD</th>
-          <th>Conv Tax</th>
-          <th>Tax (CVT)</th>
-          <th>Tax (NO)</th>
-          <th>ACA Sub (CVT)</th>
-          <th>ACA Sub (NO)</th>
-          <th>Wealth (cvt)</th>
-          <th>Wealth (no)</th>
-        </tr></thead>
-        <tbody>${withConv.years.map((y, i) => {
-          const n = noConv.years[i];
-          return `<tr class="${y.overCliff ? 'co-cliff' : ''}" style="${y.age === 65 ? 'border-top:2px solid var(--blue);' : ''}${y.age === 73 ? 'border-top:2px solid var(--orange);' : ''}">
-            <td>${y.age}${y.onMedicare ? '*' : ''}${y.age >= 73 ? '+' : ''}</td>
-            <td style="color:${y.convAmt > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(y.convAmt)}</td>
-            <td>$${fmtK(y.scenarioIncome)}</td>
-            <td>$${fmtK(n.scenarioIncome)}</td>
-            <td>$${fmtK(y.rmd)}</td>
-            <td style="color:var(--red)">$${fmtK(y.convTax)}</td>
-            <td style="color:var(--red)">$${fmtK(y.taxesPaid)}</td>
-            <td style="color:var(--red)">$${fmtK(n.taxesPaid)}</td>
-            <td style="color:${y.acaSub > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(y.acaSub)}</td>
-            <td style="color:${n.acaSub > 0 ? 'var(--accent)' : 'var(--muted)'}">$${fmtK(n.acaSub)}</td>
-            <td>$${fmtK(y.totalWealth)}</td>
-            <td>$${fmtK(n.totalWealth)}</td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>
-    </div>`;
+    ${renderScenarioTable('With Conversions', withConv)}
+    ${renderScenarioTable('Without Conversions', noConv)}`;
 }
 
 async function fetchTickerData(ticker: string): Promise<{
@@ -2919,7 +3163,7 @@ function switchPage(page: AppPage): void {
           ? 'pageConversion'
           : 'pageHealthcare';
   $(pageId).classList.add('active');
-  if (page === 'planner') renderPlanner(true);
+  if (page === 'planner') renderPlanner(true, false);
   if (page === 'brokerages') renderBrokerages();
   if (page === 'symbols') renderSymbols();
   if (page === 'conversion') renderConversionOptimizer();
@@ -2929,13 +3173,13 @@ function switchPage(page: AppPage): void {
 function exportBackup(event: Event): void {
   event.preventDefault();
   const data = {
-    version: 3,
+    version: 4,
     date: new Date().toISOString(),
     holdings,
     targets,
     yieldCache,
-    age: readInt('globalAge', 50),
-    baseIncome: readInt('globalBaseIncome', 30000),
+    age: readInt('currentAge', 50),
+    retirementAge: readRetirementAge(),
     plannerInputs: readPlannerInputs(),
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2969,19 +3213,22 @@ function importBackup(event: Event): void {
         setHoldings(data.holdings);
         if (data.targets) setTargets(data.targets);
         if (data.yieldCache) setYieldCache(data.yieldCache as YieldCache);
-        if (data.age) $('globalAge').value = String(data.age);
-        if (data.baseIncome != null) $('globalBaseIncome').value = String(data.baseIncome);
         if (data.plannerInputs) {
           for (const id of plannerInputIds) {
             const value = data.plannerInputs[id];
             if (value != null && Number.isFinite(value)) $(id).value = String(value);
           }
           localStorage.setItem('fire_planner_inputs', JSON.stringify(data.plannerInputs));
+        } else if (data.age) {
+          $('currentAge').value = String(data.age);
+          persistPlannerInputs();
+        }
+        if (data.retirementAge != null) {
+          $('retirementAge').value = String(data.retirementAge);
+          localStorage.setItem('fire_retirement_age', String(data.retirementAge));
         }
         persist();
         persistYieldCache();
-        if (data.age) localStorage.setItem('fire_user_age', String(data.age));
-        if (data.baseIncome != null) localStorage.setItem('fire_base_income', String(data.baseIncome));
         location.reload();
       } catch (error) {
         alert(`Failed to parse backup file: ${(error as Error).message}`);
@@ -3005,6 +3252,7 @@ function loadDemoPortfolio(event: Event): void {
   localStorage.removeItem('fire_targets');
   localStorage.removeItem('fire_yield_cache');
   localStorage.removeItem('fire_user_age');
+  localStorage.removeItem('fire_retirement_age');
   localStorage.removeItem('fire_base_income');
   setHoldings(createDemoHoldings());
   setTargets({ ...DEFAULT_TARGETS });
@@ -3018,8 +3266,6 @@ function loadDemoPortfolio(event: Event): void {
   lastRefreshReport = null;
   resetCsvState();
   cbParsedRows = [];
-  $('globalAge').value = '50';
-  $('globalBaseIncome').value = '30000';
   const plannerDefaults: Record<(typeof plannerInputIds)[number], string> = {
     currentAge: '50',
     annualIncome: '100000',
@@ -3030,13 +3276,16 @@ function loadDemoPortfolio(event: Event): void {
     withdrawalRate: '4',
     taxRate: '25',
     retireExpenses: '35000',
+    longevityAge: '95',
+    socialSecurityClaimAge: '67',
+    socialSecurityBenefit: '0',
   };
   for (const id of plannerInputIds) $(id).value = plannerDefaults[id];
+  $('retirementAge').value = '55';
   persist();
   persistYieldCache();
-  localStorage.setItem('fire_user_age', '50');
-  localStorage.setItem('fire_base_income', '30000');
   persistPlannerInputs();
+  localStorage.setItem('fire_retirement_age', '55');
   switchPage('planner');
   location.reload();
 }
@@ -3055,7 +3304,7 @@ function attachStaticListeners(): void {
     $(id).addEventListener('input', updateTargetSum);
   });
 
-  ['ddRetireAge', 'ddExpenses', 'ddInflation', 'ddReturn', 'ddTaxRate', 'ddLtcgRate', 'ddSS'].forEach((id) => {
+  ['ddExpenses', 'ddInflation', 'ddReturn', 'ddTaxRate', 'ddLtcgRate', 'ddSS'].forEach((id) => {
     $(id).addEventListener('input', renderDrawdown);
   });
 
@@ -3170,27 +3419,17 @@ function attachStaticListeners(): void {
     }
   });
 
-  $('globalAge').addEventListener('input', () => {
-    localStorage.setItem('fire_user_age', $('globalAge').value);
-    $('currentAge').value = $('globalAge').value;
-    persistPlannerInputs();
-    renderAll();
-  });
-
-  $('globalBaseIncome').addEventListener('input', () => {
-    localStorage.setItem('fire_base_income', $('globalBaseIncome').value);
-    renderAll();
+  $('retirementAge').addEventListener('input', () => {
+    localStorage.setItem('fire_retirement_age', $('retirementAge').value);
+    setRetirementAgeAutoUpdated(false);
+    renderRetirementPhase();
   });
 
   plannerInputIds.forEach((id) => {
-    $(id).addEventListener('input', () => {
-      if (id === 'currentAge') {
-        $('globalAge').value = $(id).value;
-        localStorage.setItem('fire_user_age', $(id).value);
-      }
+    $(id).addEventListener($(id).tagName === 'SELECT' ? 'change' : 'input', () => {
       persistPlannerInputs();
-      renderPlanner(true);
-      if (id === 'currentAge') renderHealthcare();
+      if (id === 'currentAge') localStorage.setItem('fire_user_age', $(id).value);
+      renderAll(true);
     });
   });
 }
@@ -3200,10 +3439,9 @@ setOnSortChange(renderHoldings);
 attachGlobals();
 attachStaticListeners();
 
-const savedAge = localStorage.getItem('fire_user_age');
-if (savedAge) $('globalAge').value = savedAge;
-const savedBaseIncome = localStorage.getItem('fire_base_income');
-if (savedBaseIncome) $('globalBaseIncome').value = savedBaseIncome;
 hydratePlannerInputs();
+const savedRetirementAge = localStorage.getItem('fire_retirement_age');
+if (savedRetirementAge) $('retirementAge').value = savedRetirementAge;
+syncRetirementAgeDefault();
 
 renderAll();

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getAcaContributionPct, calcAcaSubsidy, estimateBenchmarkPremium, getAcaCliff } from '../../src/calc/aca';
+import { getAcaContributionPct, calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, getAcaCliff } from '../../src/calc/aca';
 import { FPL_2025 } from '../../src/constants/aca';
 
 describe('getAcaContributionPct', () => {
@@ -31,13 +31,16 @@ describe('calcAcaSubsidy', () => {
   it('is not eligible below 100% FPL', () => {
     const result = calcAcaSubsidy(10000, 50);
     expect(result.eligible).toBe(false);
+    expect(result.medicaidEligible).toBe(true);
     expect(result.subsidy).toBe(0);
+    expect(result.netPremium).toBe(0);
   });
 
   it('cliff: not eligible above 400% FPL', () => {
     const cliff = FPL_2025 * 4;
     const result = calcAcaSubsidy(cliff + 1, 50);
     expect(result.eligible).toBe(false);
+    expect(result.medicaidEligible).toBe(false);
     expect(result.subsidy).toBe(0);
   });
 
@@ -85,5 +88,18 @@ describe('getAcaCliff', () => {
   it('returns 400% of FPL', () => {
     expect(getAcaCliff()).toBe(FPL_2025 * 4);
     expect(getAcaCliff()).toBe(62600);
+  });
+
+  it('inflates the cliff over time', () => {
+    expect(getAcaCliff(10, 0.03)).toBeGreaterThan(getAcaCliff());
+  });
+});
+
+describe('calcAcaSubsidyForYear', () => {
+  it('can keep inflation-adjusted incomes under the inflated cliff', () => {
+    const currentCliff = getAcaCliff();
+    const futureIncome = currentCliff * Math.pow(1.03, 10);
+    const result = calcAcaSubsidyForYear(futureIncome, 50, 10, 0.03);
+    expect(result.eligible).toBe(true);
   });
 });

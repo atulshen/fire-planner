@@ -70,7 +70,7 @@ function drawPlannerChart(result: FirePlannerResult): void {
   ctx.fillStyle = '#22c55e';
   ctx.font = '10px -apple-system, system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(`Target: $${fmtK(result.retirementFireNumber)}`, padL + 4, yScale(result.fireTargets[Math.min(result.fireTargets.length - 1, result.yearsToRetire ?? result.fireTargets.length - 1)]) - 6);
+  ctx.fillText(`Required: $${fmtK(result.retirementFireNumber)}`, padL + 4, yScale(result.fireTargets[Math.min(result.fireTargets.length - 1, result.yearsToRetire ?? result.fireTargets.length - 1)]) - 6);
 
   if (result.yearsToRetire !== null && result.yearsToRetire < result.years.length) {
     const retireX = xScale(result.yearsToRetire);
@@ -124,10 +124,10 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
   $('plannerStatusBadge').innerHTML = `<div class="planner-status-badge ${status.className}">${status.label}</div>`;
 
   $('plannerResultsGrid').innerHTML = `
-    <div class="stat green">
-      <div class="label">FIRE Number</div>
-      <div class="value">$${fmtK(result.fireNumber)}</div>
-      <div class="sub">Target net worth in today's dollars</div>
+    <div class="stat blue">
+      <div class="label">Required Capital</div>
+      <div class="value">$${fmtK(result.retirementFireNumber)}</div>
+      <div class="sub">Amount needed at retirement to fund living plus age-based healthcare through age ${result.longevityAge}</div>
     </div>
     <div class="stat ${result.fireAge !== null ? 'green' : 'orange'}">
       <div class="label">Retirement Age</div>
@@ -139,20 +139,40 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
       <div class="value">$${fmtK(result.projectedNetWorth)}</div>
       <div class="sub">${result.projectedNetWorth >= result.retirementFireNumber ? 'Covers target spending' : `$${fmtK(Math.max(result.retirementFireNumber - result.projectedNetWorth, 0))} short`}</div>
     </div>
+    <div class="stat blue">
+      <div class="label">4% Rule Baseline</div>
+      <div class="value">$${fmtK(result.fireNumber)}</div>
+      <div class="sub">Rule-of-thumb target for living expenses only, before longevity, healthcare, and Social Security adjustments</div>
+    </div>
     <div class="stat ${result.savingsRate >= 50 ? 'green' : result.savingsRate >= 25 ? 'orange' : 'red'}">
       <div class="label">Savings Rate</div>
       <div class="value">${result.savingsRate.toFixed(1)}%</div>
       <div class="sub">$${fmtK(Math.max(result.annualSavings, 0))}/yr saved</div>
     </div>
     <div class="stat blue">
-      <div class="label">Target at Retirement</div>
-      <div class="value">$${fmtK(result.retirementFireNumber)}</div>
-      <div class="sub">Inflation-adjusted target at age ${result.projectionAge}</div>
+      <div class="label">Bridge Need Before SS</div>
+      <div class="value">$${fmtK(result.bridgePortfolioNeedToday)}/yr</div>
+      <div class="sub">Includes age-based healthcare; $${fmtK(result.bridgePortfolioNeedAtRetirement)}/yr in retirement-year dollars before Social Security begins</div>
     </div>
-    <div class="stat green">
-      <div class="label">Safe Withdrawal</div>
-      <div class="value">$${fmtK(result.sustainableWithdrawal)}/yr</div>
-      <div class="sub">$${fmtK(result.sustainableWithdrawal / 12)}/mo at age ${result.projectionAge}</div>
+    <div class="stat blue">
+      <div class="label">Need After SS Starts</div>
+      <div class="value">$${fmtK(result.netRetireExpensesAfterSocialSecurity)}/yr</div>
+      <div class="sub">${result.socialSecurityAnnualBenefit > 0 ? `$${fmtK(result.postSsPortfolioNeedAtClaim)}/yr in claim-year dollars after Social Security starts` : 'No Social Security reduction modeled'}</div>
+    </div>
+    <div class="stat blue">
+      <div class="label">Healthcare Estimate</div>
+      <div class="value">$${fmtK(result.estimatedMedicalAtRetirement)}/yr</div>
+      <div class="sub">$${fmtK(result.estimatedMedicalAtSocialSecurity)}/yr around Social Security age. Uses full-price ACA Gold before 65 and Medicare premiums plus out-of-pocket after 65.</div>
+    </div>
+    <div class="stat blue">
+      <div class="label">Social Security</div>
+      <div class="value">${result.socialSecurityAnnualBenefit > 0 ? `$${fmtK(result.socialSecurityAnnualBenefit)}/yr` : 'Off'}</div>
+      <div class="sub">${result.socialSecurityAnnualBenefit > 0 ? `Claimed at ${result.socialSecurityClaimAge}` : 'No Social Security reduction modeled'}</div>
+    </div>
+    <div class="stat blue">
+      <div class="label">Longevity</div>
+      <div class="value">Age ${result.longevityAge}</div>
+      <div class="sub">Retirement assets are modeled to last through this age</div>
     </div>
   `;
 
@@ -168,9 +188,9 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
 
   $('plannerMilestoneList').innerHTML = result.milestones.slice(0, 6).map((milestone) => `
     <li>
-      <span class="planner-milestone-dot" style="background:${milestone.target === 'FIRE' ? 'var(--accent)' : 'var(--blue)'}"></span>
+      <span class="planner-milestone-dot" style="background:${milestone.target === 'FIRE' ? 'var(--accent)' : milestone.target === 'SS' ? 'var(--yellow)' : 'var(--blue)'}"></span>
       <span class="planner-milestone-year">Age ${milestone.age}</span>
-      <span class="planner-milestone-desc">${milestone.target === 'FIRE' ? 'Retirement ready' : `$${fmtK(milestone.target)} net worth`}</span>
+      <span class="planner-milestone-desc">${milestone.target === 'FIRE' ? 'Retirement ready' : milestone.target === 'SS' ? 'Social Security starts' : `$${fmtK(milestone.target)} net worth`}</span>
     </li>
   `).join('');
 

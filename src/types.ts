@@ -98,7 +98,6 @@ export interface DrawdownResult {
 export interface ConversionParams {
   startAge: number;
   lifeExp: number;
-  baseIncome: number;
   annualSpending: number;
   iraBalance: number;
   taxableBalance: number;

@@ -6,7 +6,11 @@ import { fmt } from '../utils/format';
  * Returns null if not eligible (below 100% FPL or above 400% FPL).
  */
 export function getAcaContributionPct(income: number): number | null {
-  const fplRatio = income / FPL_2025;
+  return getAcaContributionPctForFpl(income, FPL_2025);
+}
+
+export function getAcaContributionPctForFpl(income: number, fpl: number): number | null {
+  const fplRatio = income / fpl;
   if (fplRatio < 1.0 || fplRatio > 4.0) return null;
 
   for (let i = 1; i < ACA_CONTRIBUTION_TABLE.length; i++) {
@@ -38,6 +42,7 @@ export function estimateGoldPremium(age: number): number {
 
 export interface AcaSubsidyResult {
   eligible: boolean;
+  medicaidEligible?: boolean;
   reason?: string;
   subsidy: number;
   goldPremium: number;
@@ -49,30 +54,54 @@ export interface AcaSubsidyResult {
   fplRatio: number;
 }
 
-/**
- * Calculate ACA subsidy for a given MAGI and age.
- */
-export function calcAcaSubsidy(magi: number, age: number): AcaSubsidyResult {
-  const fplRatio = magi / FPL_2025;
+export function getAcaFpl(yearsFromBase = 0, inflationRate = 0): number {
+  return FPL_2025 * Math.pow(1 + inflationRate, Math.max(yearsFromBase, 0));
+}
+
+export function calcAcaSubsidyForFpl(magi: number, age: number, fpl: number): AcaSubsidyResult {
+  const fplRatio = magi / fpl;
   const monthlyBenchmark = estimateBenchmarkPremium(age);
   const annualBenchmark = monthlyBenchmark * 12;
   const monthlyGold = estimateGoldPremium(age);
   const annualGold = monthlyGold * 12;
 
   if (fplRatio < 1.0) {
-    return { eligible: false, reason: 'Below 100% FPL — Medicaid eligible in most states', subsidy: 0, goldPremium: annualGold, netPremium: annualGold, benchmark: annualBenchmark, monthlyBenchmark, monthlyGold, fplRatio };
+    return {
+      eligible: false,
+      medicaidEligible: true,
+      reason: 'Below 100% FPL — modeled as Medicaid with $0 medical cost',
+      subsidy: 0,
+      goldPremium: annualGold,
+      netPremium: 0,
+      benchmark: annualBenchmark,
+      monthlyBenchmark,
+      monthlyGold,
+      fplRatio,
+    };
   }
   if (fplRatio > 4.0) {
-    return { eligible: false, reason: 'Above 400% FPL ($' + fmt(Math.round(FPL_2025 * 4)) + ') — no subsidy (cliff)', subsidy: 0, goldPremium: annualGold, netPremium: annualGold, benchmark: annualBenchmark, monthlyBenchmark, monthlyGold, fplRatio };
+    return {
+      eligible: false,
+      medicaidEligible: false,
+      reason: 'Above 400% FPL ($' + fmt(Math.round(fpl * 4)) + ') — no subsidy (cliff)',
+      subsidy: 0,
+      goldPremium: annualGold,
+      netPremium: annualGold,
+      benchmark: annualBenchmark,
+      monthlyBenchmark,
+      monthlyGold,
+      fplRatio,
+    };
   }
 
-  const contribPct = getAcaContributionPct(magi)!;
+  const contribPct = getAcaContributionPctForFpl(magi, fpl)!;
   const expectedContribution = magi * contribPct;
   const subsidy = Math.max(annualBenchmark - expectedContribution, 0);
   const netPremium = Math.max(annualGold - subsidy, 0);
 
   return {
     eligible: true,
+    medicaidEligible: false,
     subsidy,
     goldPremium: annualGold,
     netPremium,
@@ -84,9 +113,20 @@ export function calcAcaSubsidy(magi: number, age: number): AcaSubsidyResult {
   };
 }
 
+export function calcAcaSubsidyForYear(magi: number, age: number, yearsFromBase = 0, inflationRate = 0): AcaSubsidyResult {
+  return calcAcaSubsidyForFpl(magi, age, getAcaFpl(yearsFromBase, inflationRate));
+}
+
+/**
+ * Calculate ACA subsidy for a given MAGI and age.
+ */
+export function calcAcaSubsidy(magi: number, age: number): AcaSubsidyResult {
+  return calcAcaSubsidyForFpl(magi, age, FPL_2025);
+}
+
 /**
  * Get the ACA cliff amount (400% FPL).
  */
-export function getAcaCliff(): number {
-  return FPL_2025 * 4;
+export function getAcaCliff(yearsFromBase = 0, inflationRate = 0): number {
+  return getAcaFpl(yearsFromBase, inflationRate) * 4;
 }

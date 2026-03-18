@@ -100,11 +100,16 @@ export function simulateDrawdown(params: DrawdownParams): DrawdownSimResult {
     // Step 1: RMD (mandatory, ordinary income)
     if (rmdAmount > 0 && canAccessRetirement) {
       const withdraw = Math.min(rmdAmount, ira);
+      const netWithdraw = withdraw * (1 - ordTax);
+      const usedForSpending = Math.min(netWithdraw, needed);
+      const excessToTaxable = Math.max(netWithdraw - usedForSpending, 0);
       fromIra += withdraw;
       ira -= withdraw;
       taxesPaid += withdraw * ordTax;
-      needed -= withdraw;
+      needed -= usedForSpending;
       if (needed < 0) needed = 0;
+      taxable += excessToTaxable;
+      taxableBasis += excessToTaxable;
     }
 
     // Step 2: Taxable account

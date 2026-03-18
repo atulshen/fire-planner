@@ -2,7 +2,7 @@ import type { AccountType, CategoryKey } from '../types';
 import { $, esc } from '../utils/dom';
 import { fmt, fmtD, fmtK } from '../utils/format';
 import { holdings, yieldCache } from '../state/store';
-import { getHoldingYield, getEarnedIncome } from '../state/income';
+import { getHoldingYield } from '../state/income';
 import { getCompositeSplit } from '../calc/allocation';
 import { FPL_2025 } from '../constants/aca';
 
@@ -84,10 +84,9 @@ export function renderInvestmentIncome(): void {
   }
 
   // MAGI impact + conversion room
-  const earnedIncome = getEarnedIncome();
   const magiFromDividends = taxableIncome + muniIncome;
   const shelteredIncome = totalIncome - magiFromDividends;
-  const totalMagi = earnedIncome + magiFromDividends;
+  const totalMagi = magiFromDividends;
   const conversionRoom = Math.max(cliffAmt - totalMagi - 1000, 0);
 
   // Summary stats
@@ -134,7 +133,7 @@ export function renderInvestmentIncome(): void {
         <div>
           <div style="font-size:0.75rem;text-transform:uppercase;font-weight:600;color:var(--muted);letter-spacing:0.04em;margin-bottom:0.25rem;">Roth Conversion Room (under ACA cliff)</div>
           <div style="font-size:0.85rem;color:var(--muted);">
-            Earned income ($${fmt(Math.round(earnedIncome))}) + investment income ($${fmt(Math.round(magiFromDividends))}) = MAGI <strong style="color:var(--text)">$${fmt(Math.round(totalMagi))}</strong>.
+            Retirement MAGI is modeled as investment income only. Current MAGI-relevant investment income is <strong style="color:var(--text)">$${fmt(Math.round(totalMagi))}</strong>.
             ACA cliff at $${fmt(Math.round(cliffAmt))}.
           </div>
         </div>

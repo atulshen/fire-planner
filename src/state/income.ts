@@ -1,7 +1,6 @@
 import type { Holding, CategoryKey, YieldCache } from '../types';
 import { holdings, yieldCache } from './store';
 import { getCompositeSplit } from '../calc/allocation';
-import { $ } from '../utils/dom';
 import { DIVIDEND_YIELDS, CATEGORY_YIELDS } from '../constants/yields';
 
 /**
@@ -71,16 +70,17 @@ export function getInvestmentIncome(): {
 }
 
 /**
- * Get the user's earned (non-investment) income from the global input field.
+ * Retirement tools assume earned income is zero.
+ * The earning-phase calculator has its own dedicated income input.
  */
 export function getEarnedIncome(): number {
-  return parseFloat($('globalBaseIncome').value) || 0;
+  return 0;
 }
 
 /**
  * Compute Modified Adjusted Gross Income:
- * earned income + taxable investment income (including muni for ACA purposes).
+ * taxable investment income (including muni for ACA purposes).
  */
 export function getMagi(): number {
-  return getEarnedIncome() + getInvestmentIncome().total;
+  return getInvestmentIncome().total;
 }

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { calcFederalIncomeTax, calcLongTermCapitalGainsTax, calcProgressiveTax, getMarginalRate } from '../../src/calc/tax';
+import {
+  calcFederalIncomeTax,
+  calcLongTermCapitalGainsTax,
+  calcProgressiveTax,
+  getInflationAdjustedStandardDeduction,
+  getMarginalRate,
+  getTopOfOrdinaryBracketGrossIncome,
+} from '../../src/calc/tax';
 import { STANDARD_DEDUCTION } from '../../src/constants/tax';
 
 describe('calcProgressiveTax', () => {
@@ -80,5 +87,24 @@ describe('calcFederalIncomeTax', () => {
     expect(result.ordinaryTax).toBeCloseTo(8770, 0);
     expect(result.capitalGainsTax).toBeCloseTo(3000, 0);
     expect(result.totalTax).toBeCloseTo(11770, 0);
+  });
+
+  it('reduces tax in later years when brackets and deduction are inflation-adjusted upward', () => {
+    const currentYearTax = calcFederalIncomeTax(80000, 20000).totalTax;
+    const laterYearTax = calcFederalIncomeTax(80000, 20000, 10, 0.03).totalTax;
+    expect(laterYearTax).toBeLessThan(currentYearTax);
+  });
+});
+
+describe('inflation-adjusted bracket helpers', () => {
+  it('inflates the standard deduction over time', () => {
+    expect(getInflationAdjustedStandardDeduction(10, 0.03)).toBeCloseTo(STANDARD_DEDUCTION * Math.pow(1.03, 10), 6);
+  });
+
+  it('inflates the gross-income target for the top of the 22% bracket', () => {
+    const currentGrossTarget = getTopOfOrdinaryBracketGrossIncome(0.22);
+    const laterGrossTarget = getTopOfOrdinaryBracketGrossIncome(0.22, 10, 0.03);
+    expect(currentGrossTarget).toBe(121800);
+    expect(laterGrossTarget).toBeGreaterThan(currentGrossTarget);
   });
 });
