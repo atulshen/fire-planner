@@ -1,0 +1,29 @@
+{
+  "name": "fire-planner",
+  "version": "1.0.0",
+  "description": "Static browser-based FIRE planning tools with a TypeScript asset manager build.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "keywords": [
+    "fire",
+    "retirement",
+    "portfolio",
+    "finance",
+    "vite",
+    "typescript"
+  ],
+  "license": "ISC",
+  "engines": {
+    "node": "^20.0.0 || ^22.0.0 || >=24.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vite": "^8.0.0",
+    "vite-plugin-singlefile": "^2.3.2",
+    "vitest": "^4.1.0"
+  }
+}
