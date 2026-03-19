@@ -1,14 +1,19 @@
 # FIRE Planner
 
-FIRE Planner is a static, browser-based set of Financial Independence / Retire Early tools. Everything runs client-side. There is no backend, database, or server runtime required for production.
+FIRE Planner is a static, browser-based set of Financial Independence / Retire Early tools. Everything runs client-side. There is no backend, database, or server runtime required for production. It is written and maintained by AI. Feel free to file issues, and they will be resolved by AI. 
 
 This project is an educational planning tool, not financial, tax, legal, or investment advice. Users should consult a qualified financial advisor or other licensed professional for advice specific to their situation.
 
 The repo now builds a single unified FIRE planning app from the TypeScript source in `src/`.
 
+
+## LIVE PAGE
+
+# https://atulshen.github.io/fire-planner/
+
 ## Status
 
-The TypeScript app is the maintained implementation for both FIRE eligibility planning and post-FIRE portfolio management.
+The TypeScript app is the maintained implementation for both FIRE eligibility planning and post-FIRE portfolio management. 
 
 - Canonical source: `src/`
 - Production build: `dist/index.html`
