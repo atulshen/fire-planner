@@ -12,6 +12,11 @@ export const TAX_BRACKETS_2026: TaxBracket[] = [
 ];
 
 export const STANDARD_DEDUCTION = 16100; // 2026 single
+export const SOCIAL_SECURITY_WAGE_BASE_2026 = 184500;
+export const SOCIAL_SECURITY_PAYROLL_RATE = 0.062;
+export const MEDICARE_PAYROLL_RATE = 0.0145;
+export const ADDITIONAL_MEDICARE_RATE = 0.009;
+export const ADDITIONAL_MEDICARE_THRESHOLD_SINGLE = 200000;
 
 // 2026 long-term capital gains brackets (single filer), taxable income basis
 export const LTCG_BRACKETS_2026: TaxBracket[] = [

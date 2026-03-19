@@ -115,13 +115,17 @@ function drawPlannerChart(result: FirePlannerResult): void {
 
 export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: boolean): void {
   const statusMap = {
-    on_track: { className: 'on-track', label: 'On Track' },
-    close: { className: 'behind', label: 'Close' },
-    needs_work: { className: 'far', label: 'Needs Work' },
+    on_track: { className: 'on-track' },
+    close: { className: 'behind' },
+    needs_work: { className: 'far' },
   } as const;
   const status = statusMap[result.status];
+  const yearsAwayLabel =
+    result.yearsToFire !== null
+      ? `${result.yearsToFire} year${result.yearsToFire === 1 ? '' : 's'} away`
+      : 'Not reached';
 
-  $('plannerStatusBadge').innerHTML = `<div class="planner-status-badge ${status.className}">${status.label}</div>`;
+  $('plannerStatusBadge').innerHTML = `<div class="planner-status-badge ${status.className}">${yearsAwayLabel}</div>`;
 
   $('plannerResultsGrid').innerHTML = `
     <div class="stat blue">
@@ -135,34 +139,24 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
       <div class="sub">${result.fireAge !== null && result.yearsToFire !== null ? `In ${result.yearsToFire} years` : `Still short at age ${result.projectionAge}`}</div>
     </div>
     <div class="stat blue">
-      <div class="label">Projected at ${result.projectionAge}</div>
-      <div class="value">$${fmtK(result.projectedNetWorth)}</div>
-      <div class="sub">${result.projectedNetWorth >= result.retirementFireNumber ? 'Covers target spending' : `$${fmtK(Math.max(result.retirementFireNumber - result.projectedNetWorth, 0))} short`}</div>
+      <div class="label">Capital at Retirement</div>
+      <div class="value">${result.projectedNetWorth >= 0 ? '$' : '-$'}${fmtK(Math.abs(result.projectedNetWorth))}</div>
+      <div class="sub">Projected portfolio balance at age ${result.projectionAge}</div>
     </div>
     <div class="stat blue">
       <div class="label">4% Rule Baseline</div>
       <div class="value">$${fmtK(result.fireNumber)}</div>
       <div class="sub">Rule-of-thumb target for living expenses only, before longevity, healthcare, and Social Security adjustments</div>
     </div>
-    <div class="stat ${result.savingsRate >= 50 ? 'green' : result.savingsRate >= 25 ? 'orange' : 'red'}">
-      <div class="label">Savings Rate</div>
-      <div class="value">${result.savingsRate.toFixed(1)}%</div>
-      <div class="sub">$${fmtK(Math.max(result.annualSavings, 0))}/yr saved</div>
-    </div>
-    <div class="stat blue">
-      <div class="label">Bridge Need Before SS</div>
-      <div class="value">$${fmtK(result.bridgePortfolioNeedToday)}/yr</div>
-      <div class="sub">Includes age-based healthcare; $${fmtK(result.bridgePortfolioNeedAtRetirement)}/yr in retirement-year dollars before Social Security begins</div>
+    <div class="stat ${result.annualSavings >= 0 ? 'green' : 'red'}">
+      <div class="label">Amount Saved</div>
+      <div class="value">${result.annualSavings >= 0 ? '$' : '-$'}${fmtK(Math.abs(result.annualSavings))}/yr</div>
+      <div class="sub">Pre-tax income minus taxes minus current expenses (${result.currentEffectiveTaxRate.toFixed(1)}% effective tax, ${result.savingsRate.toFixed(1)}% of after-tax income)</div>
     </div>
     <div class="stat blue">
       <div class="label">Need After SS Starts</div>
       <div class="value">$${fmtK(result.netRetireExpensesAfterSocialSecurity)}/yr</div>
       <div class="sub">${result.socialSecurityAnnualBenefit > 0 ? `$${fmtK(result.postSsPortfolioNeedAtClaim)}/yr in claim-year dollars after Social Security starts` : 'No Social Security reduction modeled'}</div>
-    </div>
-    <div class="stat blue">
-      <div class="label">Healthcare Estimate</div>
-      <div class="value">$${fmtK(result.estimatedMedicalAtRetirement)}/yr</div>
-      <div class="sub">$${fmtK(result.estimatedMedicalAtSocialSecurity)}/yr around Social Security age. Uses full-price ACA Gold before 65 and Medicare premiums plus out-of-pocket after 65.</div>
     </div>
     <div class="stat blue">
       <div class="label">Social Security</div>

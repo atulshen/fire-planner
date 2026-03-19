@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { calculateFirePlan } from '../../src/calc/fire';
+import { calcPayrollTax, calcProgressiveTax } from '../../src/calc/tax';
 
 describe('calculateFirePlan', () => {
   it('computes a FIRE number from retirement expenses and withdrawal rate', () => {
@@ -17,6 +18,26 @@ describe('calculateFirePlan', () => {
     });
 
     expect(result.fireNumber).toBe(875000);
+  });
+
+  it('uses the federal tax tables by default when no override is provided', () => {
+    const result = calculateFirePlan({
+      currentAge: 30,
+      annualIncome: 100000,
+      annualExpenses: 40000,
+      currentSavings: 50000,
+      returnRate: 7,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      retireExpenses: 35000,
+      longevityAge: 95,
+    });
+
+    const incomeTax = calcProgressiveTax(100000);
+    const payrollTax = calcPayrollTax(100000);
+    const totalTax = incomeTax.tax + payrollTax.totalTax;
+    expect(result.currentEffectiveTaxRate).toBeCloseTo((totalTax / 100000) * 100, 6);
+    expect(result.annualSavings).toBeCloseTo(100000 - totalTax - 40000, 6);
   });
 
   it('reaches FIRE earlier with higher savings and starting balance', () => {
@@ -85,7 +106,7 @@ describe('calculateFirePlan', () => {
     expect(result.retirementFireNumber).toBeGreaterThan(result.fireNumber);
   });
 
-  it('increases pre-retirement spending need by inflation each year', () => {
+  it('inflates pre-retirement income along with expenses each year', () => {
     const result = calculateFirePlan({
       currentAge: 30,
       annualIncome: 100000,
@@ -101,8 +122,8 @@ describe('calculateFirePlan', () => {
 
     expect(result.netWorths[0]).toBe(0);
     expect(result.netWorths[1]).toBe(50000);
-    expect(result.netWorths[2]).toBe(95000);
-    expect(result.netWorths[3]).toBe(134500);
+    expect(result.netWorths[2]).toBe(105000);
+    expect(result.netWorths[3]).toBe(165500);
   });
 
   it('reduces the required retirement target when Social Security is modeled', () => {
@@ -248,5 +269,62 @@ describe('calculateFirePlan', () => {
     expect(age67.estimatedMedicalAtRetirement).toBeGreaterThan(0);
     expect(age60.estimatedMedicalAtRetirement).not.toBe(age67.estimatedMedicalAtRetirement);
     expect(age60.bridgePortfolioNeedToday).toBeGreaterThan(age60.retireBaseExpenses);
+  });
+
+  it('reduces pre-65 healthcare estimates when lower spending implies larger ACA subsidies', () => {
+    const lowerSpending = calculateFirePlan({
+      currentAge: 60,
+      annualIncome: 0,
+      annualExpenses: 0,
+      currentSavings: 5000000,
+      returnRate: 5,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      taxRate: 20,
+      retireExpenses: 10000,
+      longevityAge: 95,
+      socialSecurityClaimAge: 67,
+      socialSecurityBenefit: 0,
+    });
+
+    const higherSpending = calculateFirePlan({
+      currentAge: 60,
+      annualIncome: 0,
+      annualExpenses: 0,
+      currentSavings: 5000000,
+      returnRate: 5,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      taxRate: 20,
+      retireExpenses: 80000,
+      longevityAge: 95,
+      socialSecurityClaimAge: 67,
+      socialSecurityBenefit: 0,
+    });
+
+    expect(lowerSpending.fireAge).toBe(60);
+    expect(higherSpending.fireAge).toBe(60);
+    expect(lowerSpending.estimatedMedicalAtRetirement).toBeLessThan(higherSpending.estimatedMedicalAtRetirement);
+  });
+
+  it('does not let pre-retirement projected capital go below zero', () => {
+    const result = calculateFirePlan({
+      currentAge: 40,
+      annualIncome: 40000,
+      annualExpenses: 80000,
+      currentSavings: 10000,
+      returnRate: 0,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      taxRate: 0,
+      retireExpenses: 100000,
+      longevityAge: 95,
+      socialSecurityClaimAge: 67,
+      socialSecurityBenefit: 0,
+    });
+
+    expect(result.fireAge).toBeNull();
+    expect(result.capitalAt67).toBe(0);
+    expect(Math.min(...result.netWorths)).toBe(0);
   });
 });

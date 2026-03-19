@@ -1,5 +1,17 @@
-import { TAX_BRACKETS_2026, STANDARD_DEDUCTION, LTCG_BRACKETS_2026 } from '../constants/tax';
+import {
+  ADDITIONAL_MEDICARE_RATE,
+  ADDITIONAL_MEDICARE_THRESHOLD_SINGLE,
+  LTCG_BRACKETS_2026,
+  MEDICARE_PAYROLL_RATE,
+  SOCIAL_SECURITY_PAYROLL_RATE,
+  SOCIAL_SECURITY_WAGE_BASE_2026,
+  STANDARD_DEDUCTION,
+  TAX_BRACKETS_2026,
+} from '../constants/tax';
 import type { TaxBracket, TaxResult } from '../types';
+
+const SS_BASE_AMOUNT_SINGLE = 25000;
+const SS_ADJUSTED_BASE_SINGLE = 34000;
 
 function inflateAmount(amount: number, yearsFromStart = 0, inflationRate = 0): number {
   return amount * Math.pow(1 + inflationRate, yearsFromStart);
@@ -15,6 +27,10 @@ function inflateBrackets(brackets: TaxBracket[], yearsFromStart = 0, inflationRa
 
 export function getInflationAdjustedStandardDeduction(yearsFromStart = 0, inflationRate = 0): number {
   return inflateAmount(STANDARD_DEDUCTION, yearsFromStart, inflationRate);
+}
+
+export function getInflationAdjustedSocialSecurityWageBase(yearsFromStart = 0, inflationRate = 0): number {
+  return inflateAmount(SOCIAL_SECURITY_WAGE_BASE_2026, yearsFromStart, inflationRate);
 }
 
 export function getInflationAdjustedOrdinaryBrackets(yearsFromStart = 0, inflationRate = 0): TaxBracket[] {
@@ -35,6 +51,51 @@ export function getTopOfOrdinaryBracketGrossIncome(
   const targetBracket = brackets.find((bracket) => bracket.rate === targetRate);
   if (!targetBracket || !Number.isFinite(targetBracket.max)) return deduction;
   return deduction + targetBracket.max;
+}
+
+export function calcTaxableSocialSecurity(
+  otherOrdinaryIncome: number,
+  capitalGains = 0,
+  socialSecurityIncome = 0,
+): number {
+  if (socialSecurityIncome <= 0) return 0;
+
+  const provisionalIncome = otherOrdinaryIncome + capitalGains + (socialSecurityIncome * 0.5);
+  if (provisionalIncome <= SS_BASE_AMOUNT_SINGLE) return 0;
+
+  if (provisionalIncome <= SS_ADJUSTED_BASE_SINGLE) {
+    return Math.min((provisionalIncome - SS_BASE_AMOUNT_SINGLE) * 0.5, socialSecurityIncome * 0.5);
+  }
+
+  const taxableAboveAdjusted = (provisionalIncome - SS_ADJUSTED_BASE_SINGLE) * 0.85;
+  const priorTierTaxable = Math.min((SS_ADJUSTED_BASE_SINGLE - SS_BASE_AMOUNT_SINGLE) * 0.5, socialSecurityIncome * 0.5);
+  return Math.min(taxableAboveAdjusted + priorTierTaxable, socialSecurityIncome * 0.85);
+}
+
+export function calcPayrollTax(
+  wageIncome: number,
+  yearsFromStart = 0,
+  inflationRate = 0,
+): {
+  socialSecurityTax: number;
+  medicareTax: number;
+  additionalMedicareTax: number;
+  totalTax: number;
+  effectiveRate: number;
+} {
+  const wages = Math.max(wageIncome, 0);
+  const ssWageBase = getInflationAdjustedSocialSecurityWageBase(yearsFromStart, inflationRate);
+  const socialSecurityTax = Math.min(wages, ssWageBase) * SOCIAL_SECURITY_PAYROLL_RATE;
+  const medicareTax = wages * MEDICARE_PAYROLL_RATE;
+  const additionalMedicareTax = Math.max(wages - ADDITIONAL_MEDICARE_THRESHOLD_SINGLE, 0) * ADDITIONAL_MEDICARE_RATE;
+  const totalTax = socialSecurityTax + medicareTax + additionalMedicareTax;
+  return {
+    socialSecurityTax,
+    medicareTax,
+    additionalMedicareTax,
+    totalTax,
+    effectiveRate: wages > 0 ? totalTax / wages : 0,
+  };
 }
 
 /**

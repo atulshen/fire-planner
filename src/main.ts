@@ -37,7 +37,7 @@ import { renderTaxEfficiency } from './render/tax-efficiency';
 import { renderBrokeragePage } from './render/brokerages';
 import { renderSymbolCatalogPage } from './render/symbol-catalog';
 import { calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, estimateGoldPremium, getAcaCliff } from './calc/aca';
-import { calcFederalIncomeTax, calcProgressiveTax, getTopOfOrdinaryBracketGrossIncome } from './calc/tax';
+import { calcFederalIncomeTax, calcPayrollTax, calcProgressiveTax, calcTaxableSocialSecurity, getTopOfOrdinaryBracketGrossIncome } from './calc/tax';
 import { getIrmaaSurcharge, getMedicareAnnualCost } from './calc/medicare';
 import { simulateDrawdown, getRmdFactor } from './calc/drawdown';
 import { guessAccountType, guessCategory } from './calc/category';
@@ -114,48 +114,12 @@ const APP_HTML = `
         <div class="planner-field">
           <label for="annualExpenses">Annual Expenses</label>
           <input type="number" id="annualExpenses" value="40000" step="1000">
-          <div class="planner-hint">Your current yearly spending</div>
+          <div class="planner-hint">Your current yearly spending in today's dollars</div>
         </div>
 
         <div class="planner-field">
           <label for="currentSavings">Current Net Worth</label>
           <input type="number" id="currentSavings" value="50000" step="1000">
-        </div>
-
-        <div class="planner-row">
-          <div class="planner-field">
-            <label for="returnRate">Return Rate (%)</label>
-            <input type="number" id="returnRate" value="7" step="0.5" min="0" max="20">
-            <div class="planner-hint">Average long-run market return</div>
-          </div>
-          <div class="planner-field">
-            <label for="inflationRate">Inflation (%)</label>
-            <input type="number" id="inflationRate" value="3" step="0.5" min="0" max="10">
-          </div>
-        </div>
-
-        <div class="planner-row">
-          <div class="planner-field">
-            <label for="withdrawalRate">Withdrawal Rate (%)</label>
-            <input type="number" id="withdrawalRate" value="4" step="0.25" min="2" max="6">
-            <div class="planner-hint">Safe range: 3.5% to 4%</div>
-          </div>
-          <div class="planner-field">
-            <label for="taxRate">Effective Tax (%)</label>
-            <input type="number" id="taxRate" value="25" step="1" min="0" max="50">
-          </div>
-        </div>
-
-        <div class="planner-field">
-          <label for="retireExpenses">Retirement Living Expenses</label>
-          <input type="number" id="retireExpenses" value="35000" step="1000">
-          <div class="planner-hint">Expected yearly non-medical spending in retirement</div>
-        </div>
-
-        <div class="planner-field">
-          <label for="longevityAge">Longevity Age</label>
-          <input type="number" id="longevityAge" value="95" min="50" max="100">
-          <div class="planner-hint">Model how long your assets need to last in retirement. Healthcare is estimated automatically by age.</div>
         </div>
 
         <div class="planner-row">
@@ -169,7 +133,59 @@ const APP_HTML = `
           <div class="planner-field">
             <label for="socialSecurityBenefit">Social Security Benefit</label>
             <input type="number" id="socialSecurityBenefit" value="0" step="1000" min="0">
-            <div class="planner-hint">Annual benefit in today's dollars</div>
+            <div class="planner-hint">Annual benefit in today's dollars. You can find your estimate in your Social Security statement or your my Social Security account at ssa.gov.</div>
+          </div>
+        </div>
+
+        <div class="planner-optional">
+          <div class="planner-optional-head">
+            <h3>Optional Assumptions</h3>
+            <div class="planner-hint">These all have defaults. Change them only if you want to tune the model.</div>
+          </div>
+
+          <div class="planner-row">
+            <div class="planner-field">
+              <label for="returnRate">Return Rate (%)</label>
+              <input type="number" id="returnRate" value="7" step="0.5" min="0" max="20">
+              <div class="planner-hint">Average long-run market return</div>
+            </div>
+            <div class="planner-field">
+              <label for="inflationRate">Inflation (%)</label>
+              <input type="number" id="inflationRate" value="3" step="0.5" min="0" max="10">
+            </div>
+          </div>
+
+          <div class="planner-row">
+            <div class="planner-field">
+              <label for="withdrawalRate">Withdrawal Rate (%)</label>
+              <input type="number" id="withdrawalRate" value="4" step="0.25" min="2" max="6">
+              <div class="planner-hint">Safe range: 3.5% to 4%</div>
+            </div>
+            <div class="planner-field"></div>
+          </div>
+
+          <div class="planner-tax-box">
+            <div class="planner-field" style="margin-bottom:0;">
+              <label for="taxRate">Effective Tax Override (%)</label>
+              <input type="number" id="taxRate" value="25" step="1" min="0" max="50">
+              <label style="display:flex;align-items:center;gap:0.45rem;margin-top:0.5rem;font-size:0.85rem;color:var(--text);">
+                <input type="checkbox" id="taxRateAuto" checked>
+                Use federal plus payroll tax tables automatically
+              </label>
+              <div class="planner-hint" id="taxRateHint"></div>
+            </div>
+          </div>
+
+          <div class="planner-field">
+            <label for="retireExpenses">Retirement Living Expenses (today's dollars)</label>
+            <input type="number" id="retireExpenses" value="40000" step="1000">
+            <div class="planner-hint">Defaults to your current annual expenses. Non-medical spending only.</div>
+          </div>
+
+          <div class="planner-field" style="margin-bottom:0;">
+            <label for="longevityAge">Longevity Age</label>
+            <input type="number" id="longevityAge" value="95" min="50" max="100">
+            <div class="planner-hint">Model how long your assets need to last in retirement. Healthcare is estimated automatically by age.</div>
           </div>
         </div>
       </div>
@@ -395,6 +411,18 @@ const APP_HTML = `
             <option value="fill_22" selected>Fill 22% bracket</option>
             <option value="maximize">Maximize spending power</option>
           </select>
+        </div>
+        <div class="field">
+          <label for="coTaxableReturn">Taxable Return Override (%)</label>
+          <input type="number" id="coTaxableReturn" step="0.1" placeholder="Auto">
+        </div>
+        <div class="field">
+          <label for="coIraReturn">IRA Return Override (%)</label>
+          <input type="number" id="coIraReturn" step="0.1" placeholder="Auto">
+        </div>
+        <div class="field">
+          <label for="coRothReturn">Roth Return Override (%)</label>
+          <input type="number" id="coRothReturn" step="0.1" placeholder="Auto">
         </div>
       </div>
 
@@ -693,6 +721,7 @@ let activeBrokerageFilter = 'all';
 let editingSymbolTicker: string | null = null;
 let currentImportBrokerage: string | null = null;
 let tickerFetchTimer: number | null = null;
+let plannerRetireExpensesCustom = false;
 let lastRefreshReport: {
   startedAt: number;
   completedAt: number;
@@ -717,6 +746,18 @@ function readInt(id: string, fallback = 0): number {
 function readFloat(id: string, fallback = 0): number {
   const value = parseFloat($(id).value);
   return Number.isFinite(value) ? value : fallback;
+}
+
+function readOptionalFloat(id: string): number | null {
+  const raw = $(id).value.trim();
+  if (!raw) return null;
+  const value = parseFloat(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function syncRetireExpensesFromCurrent(): void {
+  if (plannerRetireExpensesCustom) return;
+  $('retireExpenses').value = $('annualExpenses').value;
 }
 
 function attachGlobals(): void {
@@ -772,7 +813,7 @@ function readPlannerInputs() {
     returnRate: readFloat('returnRate', 7),
     inflationRate: readFloat('inflationRate', 3),
     withdrawalRate: readFloat('withdrawalRate', 4),
-    taxRate: readFloat('taxRate', 25),
+    taxRate: (document.getElementById('taxRateAuto') as HTMLInputElement | null)?.checked ? null : readOptionalFloat('taxRate'),
     retireExpenses: readFloat('retireExpenses', 35000),
     longevityAge: readInt('longevityAge', 95),
     socialSecurityClaimAge: readInt('socialSecurityClaimAge', 67),
@@ -781,10 +822,12 @@ function readPlannerInputs() {
 }
 
 function persistPlannerInputs(): void {
-  const payload = plannerInputIds.reduce<Record<string, number>>((acc, id) => {
-    acc[id] = readFloat(id, 0);
+  const payload = plannerInputIds.reduce<Record<string, number | string | boolean>>((acc, id) => {
+    acc[id] = $(id).value;
     return acc;
   }, {});
+  payload.taxRateAuto = (document.getElementById('taxRateAuto') as HTMLInputElement | null)?.checked ?? true;
+  payload.retireExpensesCustom = plannerRetireExpensesCustom;
   localStorage.setItem('fire_planner_inputs', JSON.stringify(payload));
 }
 
@@ -821,10 +864,18 @@ function hydratePlannerInputs(): void {
   const saved = localStorage.getItem('fire_planner_inputs');
   if (saved) {
     try {
-      const parsed = JSON.parse(saved) as Record<string, number>;
+      const parsed = JSON.parse(saved) as Record<string, number | string | boolean>;
       for (const id of plannerInputIds) {
         const value = parsed[id];
-        if (value != null && Number.isFinite(value)) $(id).value = String(value);
+        if (value != null) $(id).value = String(value);
+      }
+      const taxRateAuto = parsed.taxRateAuto;
+      if (typeof taxRateAuto === 'boolean') $('taxRateAuto').checked = taxRateAuto;
+      const retireExpensesCustom = parsed.retireExpensesCustom;
+      if (typeof retireExpensesCustom === 'boolean') {
+        plannerRetireExpensesCustom = retireExpensesCustom;
+      } else if (parsed.retireExpenses != null) {
+        plannerRetireExpensesCustom = true;
       }
     } catch {
       // Ignore malformed planner state.
@@ -832,7 +883,25 @@ function hydratePlannerInputs(): void {
   } else {
     const savedAge = localStorage.getItem('fire_user_age');
     if (savedAge) $('currentAge').value = savedAge;
+    plannerRetireExpensesCustom = false;
+    syncRetireExpensesFromCurrent();
   }
+}
+
+function updatePlannerTaxControls(): void {
+  const autoInput = document.getElementById('taxRateAuto') as HTMLInputElement | null;
+  const taxInput = document.getElementById('taxRate') as HTMLInputElement | null;
+  const hint = document.getElementById('taxRateHint');
+  if (!autoInput || !taxInput || !hint) return;
+
+  const grossIncome = readFloat('annualIncome', 100000);
+  const incomeTax = calcProgressiveTax(grossIncome);
+  const payrollTax = calcPayrollTax(grossIncome);
+  const autoRate = grossIncome > 0 ? ((incomeTax.tax + payrollTax.totalTax) / grossIncome) * 100 : 0;
+  taxInput.disabled = autoInput.checked;
+  hint.textContent = autoInput.checked
+    ? `Auto: ${autoRate.toFixed(1)}% effective tax from federal income tax plus employee Social Security and Medicare`
+    : `Override: use your own all-in effective tax rate instead of the automatic federal and payroll tax estimate`;
 }
 
 function renderPlanner(forceChart = false, syncRetirementAge = true): void {
@@ -1524,8 +1593,8 @@ function renderConversionOptimizer(): void {
   const annualSpending = readFloat('coSpending', 50000);
   const inflation = readFloat('inflationRate', 3) / 100;
   const healthcareInflation = 0.03;
+  const pre65HealthcareLoad = 1.5;
   const iraBalance = portfolioBalances.ira;
-  const taxableBal = portfolioBalances.taxable;
   const taxableCashBal = portfolioBalances.taxableCash;
   const taxableInvestedBal = portfolioBalances.taxableInvested;
   const taxableBasis = portfolioBalances.taxableInvestedBasis;
@@ -1533,10 +1602,39 @@ function renderConversionOptimizer(): void {
   const ssIncome = readFloat('coSSIncome', 20000);
   const strategy = $('coStrategy').value;
   const convEndAge = 72;
-  const taxableGrowth = estimateAccountReturn(holdings, ['taxable'], yieldCache) / 100;
-  const iraGrowth = estimateAccountReturn(holdings, ['ira'], yieldCache) / 100;
-  const rothGrowth = estimateAccountReturn(holdings, ['roth', 'hsa'], yieldCache) / 100;
-  const taxableYield = estimateAccountYield(holdings, ['taxable'], getHoldingYield) / 100;
+  const taxableCashHoldings = holdings.filter((holding) => holding.account === 'taxable' && holding.category === 'cash');
+  const taxableInvestedHoldings = holdings.filter((holding) => holding.account === 'taxable' && holding.category !== 'cash');
+  const estimatedTaxableGrowthPct = estimateAccountReturn(holdings, ['taxable'], yieldCache);
+  const estimatedIraGrowthPct = estimateAccountReturn(holdings, ['ira'], yieldCache);
+  const estimatedRothGrowthPct = estimateAccountReturn(holdings, ['roth', 'hsa'], yieldCache);
+  const estimatedTaxableCashGrowthPct = taxableCashHoldings.length > 0
+    ? estimateAccountReturn(taxableCashHoldings, ['taxable'], yieldCache)
+    : estimatedTaxableGrowthPct;
+  const estimatedTaxableInvestedGrowthPct = taxableInvestedHoldings.length > 0
+    ? estimateAccountReturn(taxableInvestedHoldings, ['taxable'], yieldCache)
+    : estimatedTaxableGrowthPct;
+  const taxableReturnOverride = $('coTaxableReturn').value.trim();
+  const iraReturnOverride = $('coIraReturn').value.trim();
+  const rothReturnOverride = $('coRothReturn').value.trim();
+  const taxableGrowthPct = readFloat('coTaxableReturn', estimatedTaxableGrowthPct);
+  const iraGrowthPct = readFloat('coIraReturn', estimatedIraGrowthPct);
+  const rothGrowthPct = readFloat('coRothReturn', estimatedRothGrowthPct);
+  const taxableCashGrowthPct = taxableReturnOverride ? taxableGrowthPct : estimatedTaxableCashGrowthPct;
+  const taxableInvestedGrowthPct = taxableReturnOverride ? taxableGrowthPct : estimatedTaxableInvestedGrowthPct;
+  const taxableCashGrowth = taxableCashGrowthPct / 100;
+  const taxableInvestedGrowth = taxableInvestedGrowthPct / 100;
+  const iraGrowth = iraGrowthPct / 100;
+  const rothGrowth = rothGrowthPct / 100;
+  const taxableCashYield = taxableCashHoldings.length > 0
+    ? estimateAccountYield(taxableCashHoldings, ['taxable'], getHoldingYield) / 100
+    : 0;
+  const taxableInvestedYield = taxableInvestedHoldings.length > 0
+    ? estimateAccountYield(taxableInvestedHoldings, ['taxable'], getHoldingYield) / 100
+    : 0;
+
+  ($('coTaxableReturn') as HTMLInputElement).placeholder = fmtD(estimatedTaxableGrowthPct, 1);
+  ($('coIraReturn') as HTMLInputElement).placeholder = fmtD(estimatedIraGrowthPct, 1);
+  ($('coRothReturn') as HTMLInputElement).placeholder = fmtD(estimatedRothGrowthPct, 1);
 
   if (holdings.length === 0) {
     $('coAssumptions').innerHTML = '';
@@ -1545,53 +1643,30 @@ function renderConversionOptimizer(): void {
   }
 
   if (iraBalance <= 0) {
-    $('coAssumptions').textContent = `Using holdings-based assumptions. Estimated annual returns: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%.`;
+    $('coAssumptions').textContent = `Using holdings-based assumptions. Annual returns used: Taxable ${fmtD(taxableGrowthPct, 1)}%${taxableReturnOverride ? ` (manual; estimate ${fmtD(estimatedTaxableGrowthPct, 1)}%)` : ''}, IRA ${fmtD(iraGrowthPct, 1)}%${iraReturnOverride ? ` (manual; estimate ${fmtD(estimatedIraGrowthPct, 1)}%)` : ''}, Roth/HSA ${fmtD(rothGrowthPct, 1)}%${rothReturnOverride ? ` (manual; estimate ${fmtD(estimatedRothGrowthPct, 1)}%)` : ''}.`;
     $('coResults').innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">No Traditional IRA holdings found.</div><div class="co-optimal-sub">Add or import Traditional IRA holdings to compare conversion scenarios.</div></div>';
     return;
   }
 
-  $('coAssumptions').textContent = `Using current holdings automatically. Retirement earned income is assumed to be $0. Estimated annual returns by account mix: Taxable ${fmtD(taxableGrowth * 100, 1)}%, IRA ${fmtD(iraGrowth * 100, 1)}%, Roth/HSA ${fmtD(rothGrowth * 100, 1)}%. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies with ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA. Taxable cash is spent before selling appreciated taxable assets.`;
+  $('coAssumptions').textContent = `Using current holdings automatically. Retirement earned income is assumed to be $0. Annual returns used: Taxable invested ${fmtD(taxableGrowthPct, 1)}%${taxableReturnOverride ? ` (manual; estimate ${fmtD(estimatedTaxableGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, taxable cash ${fmtD(taxableCashGrowthPct, 1)}%${taxableReturnOverride ? ' (matching manual taxable override)' : ' (cash estimate)'}, IRA ${fmtD(iraGrowthPct, 1)}%${iraReturnOverride ? ` (manual; estimate ${fmtD(estimatedIraGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, Roth/HSA ${fmtD(rothGrowthPct, 1)}%${rothReturnOverride ? ` (manual; estimate ${fmtD(estimatedRothGrowthPct, 1)}%)` : ' (holdings mix estimate)'}. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies with a 50% load and ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA. Taxable cash is spent before selling appreciated taxable assets.`;
 
   if (startAge >= lifeExp) {
     $('coResults').innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">Life expectancy must be greater than current age.</div></div>';
     return;
   }
 
-  function getConversionAmount(
-    currentAge: number,
-    currentIraBal: number,
-    strat: string,
-    baselineIncome: number,
-    yearsFromStart: number,
-    expectedCapitalGains = 0,
-  ): number {
-    if (currentAge > convEndAge || currentIraBal <= 0) return 0;
-    const acaCliff = getAcaCliff(yearsFromStart, inflation);
-    const topOf12GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.12, yearsFromStart, inflation);
-    const topOf22GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.22, yearsFromStart, inflation);
-    if (strat === 'aca_safe') {
-      if (currentAge < 65) return Math.min(Math.max(acaCliff - baselineIncome - expectedCapitalGains - 1000, 0), currentIraBal);
-      return Math.min(Math.max(topOf22GrossIncome - baselineIncome, 0), currentIraBal);
-    }
-    if (strat === 'fill_12') return Math.min(Math.max(topOf12GrossIncome - baselineIncome, 0), currentIraBal);
-    if (strat === 'fill_22') return Math.min(Math.max(topOf22GrossIncome - baselineIncome, 0), currentIraBal);
-    if (strat === 'maximize') {
-      let bestAmt = 0;
-      const step = 5000;
-      const maxAmt = Math.min(currentIraBal, 300000);
-      const acaBase = currentAge < 65 ? calcAcaSubsidyForYear(baselineIncome, currentAge, yearsFromStart, inflation) : null;
-      const baseTaxAmt = calcProgressiveTax(baselineIncome, yearsFromStart, inflation).tax;
-      for (let amt = step; amt <= maxAmt; amt += step) {
-        const magi = baselineIncome + amt;
-        const tax = calcProgressiveTax(magi, yearsFromStart, inflation).tax - baseTaxAmt;
-        const aca = currentAge < 65 ? calcAcaSubsidyForYear(magi, currentAge, yearsFromStart, inflation) : null;
-        const subLost = (acaBase?.subsidy || 0) - (aca?.subsidy || 0);
-        const effRate = (tax + subLost) / amt;
-        if (effRate < 0.30) bestAmt = amt;
-      }
-      return bestAmt;
-    }
-    return 0;
+  function buildIncomeState(otherOrdinaryIncome: number, capitalGains: number, socialSecurityIncome: number) {
+    const taxableSocialSecurity = calcTaxableSocialSecurity(otherOrdinaryIncome, capitalGains, socialSecurityIncome);
+    const taxOrdinaryIncome = otherOrdinaryIncome + taxableSocialSecurity;
+    const taxIncome = taxOrdinaryIncome + capitalGains;
+    const acaIncome = otherOrdinaryIncome + capitalGains + socialSecurityIncome;
+    return {
+      taxableSocialSecurity,
+      taxOrdinaryIncome,
+      taxIncome,
+      acaIncome,
+      medicareIncome: taxIncome,
+    };
   }
 
   function estimateAnnualHealthcareCost(age: number, yearsFromStart: number, magi: number): { annualCost: number; acaSub: number } {
@@ -1604,9 +1679,156 @@ function renderConversionOptimizer(): void {
     const aca = calcAcaSubsidyForYear(magi, age, yearsFromStart, inflation);
     const acaSub = aca.medicaidEligible ? 0 : (aca.subsidy || 0) * inflationFactor;
     return {
-      annualCost: aca.netPremium * inflationFactor,
+      annualCost: aca.netPremium * inflationFactor * pre65HealthcareLoad,
       acaSub,
     };
+  }
+
+  function projectPre65AcaIncome(
+    age: number,
+    yearsFromStart: number,
+    baselineOtherOrdinaryIncome: number,
+    socialSecurityIncome: number,
+    baselineAfterTaxCash: number,
+    baselineTax: number,
+    baseSpending: number,
+    availableTaxableCash: number,
+    availableTaxableInvested: number,
+    availableTaxableCostBasis: number,
+    availableRoth: number,
+    convAmt: number,
+  ): number {
+    const ordinaryIncomeExSs = baselineOtherOrdinaryIncome + convAmt;
+    let incomeState = buildIncomeState(ordinaryIncomeExSs, 0, socialSecurityIncome);
+    const currentTax = calcFederalIncomeTax(incomeState.taxOrdinaryIncome, 0, yearsFromStart, inflation).totalTax;
+    const convTax = currentTax - baselineTax;
+    let healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, incomeState.acaIncome);
+    let spendingNeed = baseSpending + healthcare.annualCost;
+    let netCashAfterTaxes = baselineAfterTaxCash - convTax;
+    let spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+    let remaining = normalizeShortfall(spendingNeed - spentThisYear);
+    let realizedTaxableGains = 0;
+
+    if (remaining > 0 && availableTaxableCash > 0) {
+      const cashDraw = Math.min(remaining, availableTaxableCash);
+      netCashAfterTaxes += cashDraw;
+      spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+      remaining = normalizeShortfall(spendingNeed - spentThisYear);
+    }
+
+    if (remaining > 0 && availableRoth > 0) {
+      const rothDraw = Math.min(remaining, availableRoth);
+      netCashAfterTaxes += rothDraw;
+      spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+      remaining = normalizeShortfall(spendingNeed - spentThisYear);
+    }
+
+    if (remaining > 0 && availableTaxableInvested > 0) {
+      const gainRatio = availableTaxableInvested > 0 ? Math.max(0, 1 - availableTaxableCostBasis / availableTaxableInvested) : 0;
+      const taxBeforeTaxable = currentTax;
+      let adjustedDraw = 0;
+
+      for (let i = 0; i < 3; i++) {
+        const neededNet = Math.max(spendingNeed - netCashAfterTaxes, 0);
+        adjustedDraw = solveGrossWithdrawal(availableTaxableInvested, neededNet, (gross) => {
+          const gains = gross * gainRatio;
+          const projectedIncome = buildIncomeState(ordinaryIncomeExSs, gains, socialSecurityIncome);
+          const taxAfter = calcFederalIncomeTax(projectedIncome.taxOrdinaryIncome, gains, yearsFromStart, inflation).totalTax;
+          return gross - (taxAfter - taxBeforeTaxable);
+        });
+
+        realizedTaxableGains = adjustedDraw * gainRatio;
+        incomeState = buildIncomeState(ordinaryIncomeExSs, realizedTaxableGains, socialSecurityIncome);
+        healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, incomeState.acaIncome);
+        const updatedSpendingNeed = baseSpending + healthcare.annualCost;
+        if (Math.abs(updatedSpendingNeed - spendingNeed) < 1) {
+          spendingNeed = updatedSpendingNeed;
+          break;
+        }
+        spendingNeed = updatedSpendingNeed;
+      }
+    }
+
+    return buildIncomeState(ordinaryIncomeExSs, realizedTaxableGains, socialSecurityIncome).acaIncome;
+  }
+
+  function getConversionAmount(
+    currentAge: number,
+    currentIraBal: number,
+    strat: string,
+    baselineTaxOrdinaryIncome: number,
+    baselineOtherOrdinaryIncome: number,
+    socialSecurityIncome: number,
+    baselineAfterTaxCash: number,
+    baselineTax: number,
+    yearsFromStart: number,
+    currentTaxableCash: number,
+    currentTaxableInvested: number,
+    currentTaxableCostBasis: number,
+    currentRoth: number,
+  ): number {
+    if (currentAge > convEndAge || currentIraBal <= 0) return 0;
+    const acaCliff = getAcaCliff(yearsFromStart, inflation);
+    const topOf12GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.12, yearsFromStart, inflation);
+    const topOf22GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.22, yearsFromStart, inflation);
+    if (strat === 'aca_safe') {
+      if (currentAge < 65) {
+        const baselineAcaIncome = baselineOtherOrdinaryIncome + socialSecurityIncome;
+        if (baselineAcaIncome >= acaCliff) return 0;
+
+        const baseSpending = annualSpending * Math.pow(1 + inflation, yearsFromStart);
+        let low = 0;
+        let high = currentIraBal;
+        let best = 0;
+
+        for (let i = 0; i < 28; i++) {
+          const mid = (low + high) / 2;
+          const projectedIncome = projectPre65AcaIncome(
+            currentAge,
+            yearsFromStart,
+            baselineOtherOrdinaryIncome,
+            socialSecurityIncome,
+            baselineAfterTaxCash,
+            baselineTax,
+            baseSpending,
+            currentTaxableCash,
+            currentTaxableInvested,
+            currentTaxableCostBasis,
+            currentRoth + mid,
+            mid,
+          );
+
+          if (projectedIncome <= acaCliff - 100) {
+            best = mid;
+            low = mid;
+          } else {
+            high = mid;
+          }
+        }
+
+        return Math.min(best, currentIraBal);
+      }
+      return Math.min(Math.max(topOf22GrossIncome - baselineTaxOrdinaryIncome, 0), currentIraBal);
+    }
+    if (strat === 'fill_12') return Math.min(Math.max(topOf12GrossIncome - baselineTaxOrdinaryIncome, 0), currentIraBal);
+    if (strat === 'fill_22') return Math.min(Math.max(topOf22GrossIncome - baselineTaxOrdinaryIncome, 0), currentIraBal);
+    if (strat === 'maximize') {
+      let bestAmt = 0;
+      const step = 5000;
+      const maxAmt = Math.min(currentIraBal, 300000);
+      const acaBase = currentAge < 65 ? calcAcaSubsidyForYear(baselineOtherOrdinaryIncome + socialSecurityIncome, currentAge, yearsFromStart, inflation) : null;
+      const baseTaxAmt = calcProgressiveTax(baselineTaxOrdinaryIncome, yearsFromStart, inflation).tax;
+      for (let amt = step; amt <= maxAmt; amt += step) {
+        const projectedTaxOrdinaryIncome = buildIncomeState(baselineOtherOrdinaryIncome + amt, 0, socialSecurityIncome).taxOrdinaryIncome;
+        const tax = calcProgressiveTax(projectedTaxOrdinaryIncome, yearsFromStart, inflation).tax - baseTaxAmt;
+        const aca = currentAge < 65 ? calcAcaSubsidyForYear(baselineOtherOrdinaryIncome + socialSecurityIncome + amt, currentAge, yearsFromStart, inflation) : null;
+        const subLost = (acaBase?.subsidy || 0) - (aca?.subsidy || 0);
+        const effRate = (tax + subLost) / amt;
+        if (effRate < 0.30) bestAmt = amt;
+      }
+      return bestAmt;
+    }
+    return 0;
   }
 
   function solveGrossWithdrawal(
@@ -1627,6 +1849,10 @@ function renderConversionOptimizer(): void {
     return high;
   }
 
+  function normalizeShortfall(shortfall: number): number {
+    return shortfall > 1 ? shortfall : 0;
+  }
+
   function simulateLifetime(doConvert: boolean) {
     let ira = iraBalance;
     let rothExisting = rothBal;
@@ -1642,13 +1868,13 @@ function renderConversionOptimizer(): void {
     const years: Array<{
       age: number;
       convAmt: number;
-      scenarioIncome: number;
+      taxIncome: number;
       convTax: number;
       taxesPaid: number;
       rmd: number;
       acaSub: number;
       acaCliff: number;
-      taxableIncome: number;
+      acaIncome: number;
       baseSpending: number;
       healthcareCost: number;
       expensesNeed: number;
@@ -1679,35 +1905,54 @@ function renderConversionOptimizer(): void {
         rmd = ira / factor;
       }
 
-      const taxable = taxableCash + taxableInvested;
-      const recurringTaxableIncome = taxable * taxableYield;
-      const baselineIncome = earnedIncome + recurringTaxableIncome + ssThisYear + rmd;
-      const baselineTax = calcFederalIncomeTax(baselineIncome, 0, yearsFromStart, inflation).totalTax;
-      const baselineAfterTaxCash = baselineIncome - baselineTax;
+      const recurringTaxableIncome = (taxableCash * taxableCashYield) + (taxableInvested * taxableInvestedYield);
+      const baselineOtherOrdinaryIncome = earnedIncome + recurringTaxableIncome + rmd;
+      const baselineIncomeState = buildIncomeState(baselineOtherOrdinaryIncome, 0, ssThisYear);
+      const baselineCashIncome = baselineOtherOrdinaryIncome + ssThisYear;
+      const baselineTax = calcFederalIncomeTax(baselineIncomeState.taxOrdinaryIncome, 0, yearsFromStart, inflation).totalTax;
+      const baselineAfterTaxCash = baselineCashIncome - baselineTax;
       const taxableGainRatio = taxableInvested > 0 ? Math.max(0, 1 - taxableCostBasis / taxableInvested) : 0;
-      const baselineHealthcare = estimateAnnualHealthcareCost(age, yearsFromStart, baselineIncome).annualCost;
+      const baselineHealthcare = estimateAnnualHealthcareCost(
+        age,
+        yearsFromStart,
+        onMedicare ? baselineIncomeState.medicareIncome : baselineIncomeState.acaIncome,
+      ).annualCost;
       const baselineShortfall = Math.max(inflatedSpending + baselineHealthcare - baselineAfterTaxCash, 0);
       const estimatedCashDraw = Math.min(baselineShortfall, taxableCash);
       const estimatedInvestedNeed = Math.max(baselineShortfall - estimatedCashDraw, 0);
-      const estimatedTaxableDraw = Math.min(estimatedInvestedNeed / Math.max(1 - taxableGainRatio * 0.15, 0.01), taxableInvested);
-      const expectedCapitalGains = estimatedTaxableDraw * taxableGainRatio;
-      const convAmt = doConvert ? getConversionAmount(age, ira, strategy, baselineIncome, yearsFromStart, expectedCapitalGains) : 0;
-      let ordinaryIncome = baselineIncome + convAmt;
+      const currentRoth = rothExisting + rothConverted;
+      const convAmt = doConvert ? getConversionAmount(
+        age,
+        ira,
+        strategy,
+        baselineIncomeState.taxOrdinaryIncome,
+        baselineOtherOrdinaryIncome,
+        ssThisYear,
+        baselineAfterTaxCash,
+        baselineTax,
+        yearsFromStart,
+        taxableCash,
+        taxableInvested,
+        taxableCostBasis,
+        currentRoth,
+      ) : 0;
+      let ordinaryIncomeExSs = baselineOtherOrdinaryIncome + convAmt;
       let realizedTaxableGains = 0;
-      let iraSpendingDraw = 0;
-      let taxableIncome = ordinaryIncome;
-      let currentTax = calcFederalIncomeTax(ordinaryIncome, 0, yearsFromStart, inflation).totalTax;
+      let currentIncomeState = buildIncomeState(ordinaryIncomeExSs, 0, ssThisYear);
+      let taxIncome = currentIncomeState.taxIncome;
+      let acaIncome = currentIncomeState.acaIncome;
+      let currentTax = calcFederalIncomeTax(currentIncomeState.taxOrdinaryIncome, 0, yearsFromStart, inflation).totalTax;
       const convTax = currentTax - baselineTax;
       let taxesPaidThisYear = currentTax;
-      let healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, taxableIncome);
+      let healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, onMedicare ? currentIncomeState.medicareIncome : acaIncome);
       let acaSub = healthcare.acaSub;
       const baselineFundingAvailable = Math.max(baselineAfterTaxCash - convTax, 0);
-      const rmdShareOfBaselineIncome = baselineIncome > 0 ? rmd / baselineIncome : 0;
-      const ssFundingAvailable = baselineIncome > 0
-        ? baselineFundingAvailable * (ssThisYear / baselineIncome)
+      const rmdShareOfBaselineCashIncome = baselineCashIncome > 0 ? rmd / baselineCashIncome : 0;
+      const ssFundingAvailable = baselineCashIncome > 0
+        ? baselineFundingAvailable * (ssThisYear / baselineCashIncome)
         : 0;
-      const rmdFundingAvailable = baselineIncome > 0
-        ? baselineFundingAvailable * rmdShareOfBaselineIncome
+      const rmdFundingAvailable = baselineCashIncome > 0
+        ? baselineFundingAvailable * rmdShareOfBaselineCashIncome
         : 0;
       let taxableFunding = 0;
       let iraFunding = 0;
@@ -1720,7 +1965,7 @@ function renderConversionOptimizer(): void {
       let spendingNeed = inflatedSpending + healthcare.annualCost;
       let netCashAfterTaxes = baselineAfterTaxCash - convTax;
       let spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-      let remaining = Math.max(spendingNeed - netCashAfterTaxes, 0);
+      let remaining = normalizeShortfall(spendingNeed - netCashAfterTaxes);
 
       if (remaining > 0 && taxableCash > 0) {
         const cashDraw = Math.min(remaining, taxableCash);
@@ -1728,45 +1973,7 @@ function renderConversionOptimizer(): void {
         taxableFunding += cashDraw;
         netCashAfterTaxes += cashDraw;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = spendingNeed - spentThisYear;
-      }
-
-      if (remaining > 0 && taxableInvested > 0) {
-        const gainRatio = taxableInvested > 0 ? Math.max(0, 1 - taxableCostBasis / taxableInvested) : 0;
-        const taxBeforeTaxable = currentTax;
-        let adjustedDraw = 0;
-
-        for (let i = 0; i < 3; i++) {
-          const neededNet = Math.max(spendingNeed - netCashAfterTaxes, 0);
-          adjustedDraw = solveGrossWithdrawal(taxableInvested, neededNet, (gross) => {
-            const gains = gross * gainRatio;
-            const taxAfter = calcFederalIncomeTax(ordinaryIncome, gains, yearsFromStart, inflation).totalTax;
-            return gross - (taxAfter - taxBeforeTaxable);
-          });
-
-          realizedTaxableGains = adjustedDraw * gainRatio;
-          taxableIncome = ordinaryIncome + realizedTaxableGains;
-          healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, taxableIncome);
-          acaSub = healthcare.acaSub;
-          const updatedSpendingNeed = inflatedSpending + healthcare.annualCost;
-          if (Math.abs(updatedSpendingNeed - spendingNeed) < 1) {
-            spendingNeed = updatedSpendingNeed;
-            break;
-          }
-          spendingNeed = updatedSpendingNeed;
-        }
-
-        const taxAfterTaxable = calcFederalIncomeTax(ordinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
-        const ltcgTax = taxAfterTaxable - taxBeforeTaxable;
-        taxableCostBasis -= adjustedDraw * (1 - gainRatio);
-        taxableInvested -= adjustedDraw;
-        currentTax = taxAfterTaxable;
-        taxesPaidThisYear = currentTax;
-        taxableFunding += adjustedDraw - ltcgTax;
-        netCashAfterTaxes += adjustedDraw - ltcgTax;
-        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = spendingNeed - spentThisYear;
-        taxableIncome = ordinaryIncome + realizedTaxableGains;
+        remaining = normalizeShortfall(spendingNeed - spentThisYear);
       }
 
       let roth = rothExisting + rothConverted;
@@ -1778,29 +1985,76 @@ function renderConversionOptimizer(): void {
         rothFunding += draw;
         netCashAfterTaxes += draw;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = spendingNeed - spentThisYear;
+        remaining = normalizeShortfall(spendingNeed - spentThisYear);
+      }
+
+      if (remaining > 0 && taxableInvested > 0) {
+        const gainRatio = taxableInvested > 0 ? Math.max(0, 1 - taxableCostBasis / taxableInvested) : 0;
+        const taxBeforeTaxable = currentTax;
+        let adjustedDraw = 0;
+
+        for (let i = 0; i < 3; i++) {
+          const neededNet = Math.max(spendingNeed - netCashAfterTaxes, 0);
+          adjustedDraw = solveGrossWithdrawal(taxableInvested, neededNet, (gross) => {
+            const gains = gross * gainRatio;
+            const projectedIncomeState = buildIncomeState(ordinaryIncomeExSs, gains, ssThisYear);
+            const taxAfter = calcFederalIncomeTax(projectedIncomeState.taxOrdinaryIncome, gains, yearsFromStart, inflation).totalTax;
+            return gross - (taxAfter - taxBeforeTaxable);
+          });
+
+          realizedTaxableGains = adjustedDraw * gainRatio;
+          currentIncomeState = buildIncomeState(ordinaryIncomeExSs, realizedTaxableGains, ssThisYear);
+          taxIncome = currentIncomeState.taxIncome;
+          acaIncome = currentIncomeState.acaIncome;
+          healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, onMedicare ? currentIncomeState.medicareIncome : acaIncome);
+          acaSub = healthcare.acaSub;
+          const updatedSpendingNeed = inflatedSpending + healthcare.annualCost;
+          if (Math.abs(updatedSpendingNeed - spendingNeed) < 1) {
+            spendingNeed = updatedSpendingNeed;
+            break;
+          }
+          spendingNeed = updatedSpendingNeed;
+        }
+
+        const taxAfterTaxable = calcFederalIncomeTax(currentIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
+        const ltcgTax = taxAfterTaxable - taxBeforeTaxable;
+        taxableCostBasis -= adjustedDraw * (1 - gainRatio);
+        taxableInvested -= adjustedDraw;
+        currentTax = taxAfterTaxable;
+        taxesPaidThisYear = currentTax;
+        taxableFunding += adjustedDraw - ltcgTax;
+        netCashAfterTaxes += adjustedDraw - ltcgTax;
+        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+        remaining = normalizeShortfall(spendingNeed - spentThisYear);
       }
 
       if (remaining > 0 && ira > 0) {
         const taxBeforeIra = currentTax;
         const draw = solveGrossWithdrawal(ira, remaining, (gross) => {
-          const taxAfter = calcFederalIncomeTax(ordinaryIncome + gross, realizedTaxableGains, yearsFromStart, inflation).totalTax;
+          const projectedIncomeState = buildIncomeState(ordinaryIncomeExSs + gross, realizedTaxableGains, ssThisYear);
+          const taxAfter = calcFederalIncomeTax(projectedIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
           return gross - (taxAfter - taxBeforeIra);
         });
-        const taxAfterIra = calcFederalIncomeTax(ordinaryIncome + draw, realizedTaxableGains, yearsFromStart, inflation).totalTax;
+        const postIraIncomeState = buildIncomeState(ordinaryIncomeExSs + draw, realizedTaxableGains, ssThisYear);
+        const taxAfterIra = calcFederalIncomeTax(postIraIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
         const drawTax = taxAfterIra - taxBeforeIra;
         ira -= draw;
-        iraSpendingDraw = draw;
-        ordinaryIncome += draw;
+        ordinaryIncomeExSs += draw;
+        currentIncomeState = postIraIncomeState;
+        taxIncome = currentIncomeState.taxIncome;
+        acaIncome = currentIncomeState.acaIncome;
         currentTax = taxAfterIra;
         taxesPaidThisYear = currentTax;
+        healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, onMedicare ? currentIncomeState.medicareIncome : acaIncome);
+        acaSub = healthcare.acaSub;
+        spendingNeed = inflatedSpending + healthcare.annualCost;
         iraFunding += draw - drawTax;
         netCashAfterTaxes += draw - drawTax;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = spendingNeed - spentThisYear;
-        taxableIncome = ordinaryIncome + realizedTaxableGains;
+        remaining = normalizeShortfall(spendingNeed - spentThisYear);
       }
 
+      roth = rothExisting + rothConverted;
       if (remaining > 0 && roth > 0) {
         const draw = Math.min(remaining, roth);
         const fromConverted = Math.min(draw, rothConverted);
@@ -1809,7 +2063,7 @@ function renderConversionOptimizer(): void {
         rothFunding += draw;
         netCashAfterTaxes += draw;
         spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = spendingNeed - spentThisYear;
+        remaining = normalizeShortfall(spendingNeed - spentThisYear);
       }
 
       if (remaining > 0 && ranOutAge === null) ranOutAge = age;
@@ -1836,22 +2090,22 @@ function renderConversionOptimizer(): void {
       ira = Math.max(ira, 0) * (1 + iraGrowth);
       rothExisting = Math.max(rothExisting, 0) * (1 + rothGrowth);
       rothConverted = Math.max(rothConverted, 0) * (1 + iraGrowth);
-      taxableCash = Math.max(taxableCash, 0) * (1 + taxableGrowth);
-      taxableInvested = Math.max(taxableInvested, 0) * (1 + taxableGrowth);
-      taxableCostBasis = Math.max(taxableCostBasis, 0) * (1 + taxableGrowth * 0.3);
+      taxableCash = Math.max(taxableCash, 0) * (1 + taxableCashGrowth);
+      taxableInvested = Math.max(taxableInvested, 0) * (1 + taxableInvestedGrowth);
+      taxableCostBasis = Math.max(taxableCostBasis, 0) * (1 + taxableInvestedGrowth * 0.3);
       roth = rothExisting + rothConverted;
       const endingTaxable = taxableCash + taxableInvested;
 
       years.push({
         age,
         convAmt,
-        scenarioIncome: taxableIncome,
+        taxIncome,
         convTax,
         taxesPaid: taxesPaidThisYear,
         rmd,
         acaSub,
         acaCliff,
-        taxableIncome,
+        acaIncome,
         baseSpending: inflatedSpending,
         healthcareCost: healthcare.annualCost,
         expensesNeed: spendingNeed,
@@ -1867,7 +2121,7 @@ function renderConversionOptimizer(): void {
         taxable: endingTaxable,
         totalWealth: ira + roth + endingTaxable,
         onMedicare,
-        overCliff: !onMedicare && taxableIncome > acaCliff,
+        overCliff: !onMedicare && acaIncome > acaCliff,
       });
     }
 
@@ -1885,7 +2139,6 @@ function renderConversionOptimizer(): void {
 
   const withConv = simulateLifetime(true);
   const noConv = simulateLifetime(false);
-  const fundedExpenseDiff = withConv.totalFundedExpenses - noConv.totalFundedExpenses;
   const healthcareDiff = withConv.totalHealthcarePaid - noConv.totalHealthcarePaid;
   const taxDiff = withConv.totalTaxPaid - noConv.totalTaxPaid;
   const subsidyDiff = withConv.totalSubsidyReceived - noConv.totalSubsidyReceived;
@@ -1940,7 +2193,8 @@ function renderConversionOptimizer(): void {
           <thead><tr>
             <th style="text-align:left">Age</th>
             <th>Convert</th>
-            <th>Taxable Income</th>
+            <th>Tax Income</th>
+            <th>ACA Income</th>
             <th>ACA Cliff</th>
             <th>Base Spending</th>
             <th>Healthcare</th>
@@ -1959,8 +2213,9 @@ function renderConversionOptimizer(): void {
             <tr class="${year.overCliff ? 'co-cliff' : ''}" style="${year.age === 65 ? 'border-top:2px solid var(--blue);' : ''}${year.age === 73 ? 'border-top:2px solid var(--orange);' : ''}">
               <td>${year.age}${year.onMedicare ? '*' : ''}${year.age >= 73 ? '+' : ''}</td>
               <td style="color:${year.convAmt > 0 ? 'var(--accent)' : 'var(--muted)'}">${fmtCoMoney(year.convAmt)}</td>
-              <td>${fmtCoMoney(year.scenarioIncome)}</td>
-              <td>${fmtCoMoney(year.acaCliff)}</td>
+              <td>${fmtCoMoney(year.taxIncome)}</td>
+              <td>${year.onMedicare ? '—' : fmtCoMoney(year.acaIncome)}</td>
+              <td>${year.onMedicare ? '—' : fmtCoMoney(year.acaCliff)}</td>
               <td>${fmtCoMoney(year.baseSpending)}</td>
               <td>${fmtCoMoney(year.healthcareCost)}</td>
               <td>${fmtCoMoney(year.expensesNeed)}</td>
@@ -3216,8 +3471,10 @@ function importBackup(event: Event): void {
         if (data.plannerInputs) {
           for (const id of plannerInputIds) {
             const value = data.plannerInputs[id];
-            if (value != null && Number.isFinite(value)) $(id).value = String(value);
+            if (value != null) $(id).value = String(value);
           }
+          if (typeof data.plannerInputs.taxRateAuto === 'boolean') $('taxRateAuto').checked = data.plannerInputs.taxRateAuto;
+          if (typeof data.plannerInputs.retireExpensesCustom === 'boolean') plannerRetireExpensesCustom = data.plannerInputs.retireExpensesCustom;
           localStorage.setItem('fire_planner_inputs', JSON.stringify(data.plannerInputs));
         } else if (data.age) {
           $('currentAge').value = String(data.age);
@@ -3275,12 +3532,15 @@ function loadDemoPortfolio(event: Event): void {
     inflationRate: '3',
     withdrawalRate: '4',
     taxRate: '25',
-    retireExpenses: '35000',
+    retireExpenses: '40000',
     longevityAge: '95',
     socialSecurityClaimAge: '67',
     socialSecurityBenefit: '0',
   };
   for (const id of plannerInputIds) $(id).value = plannerDefaults[id];
+  $('taxRateAuto').checked = true;
+  plannerRetireExpensesCustom = false;
+  syncRetireExpensesFromCurrent();
   $('retirementAge').value = '55';
   persist();
   persistYieldCache();
@@ -3308,7 +3568,7 @@ function attachStaticListeners(): void {
     $(id).addEventListener('input', renderDrawdown);
   });
 
-  ['coLifeExp', 'coSpending', 'coSSIncome', 'coStrategy'].forEach((id) => {
+  ['coLifeExp', 'coSpending', 'coSSIncome', 'coStrategy', 'coTaxableReturn', 'coIraReturn', 'coRothReturn'].forEach((id) => {
     $(id).addEventListener($(id).tagName === 'SELECT' ? 'change' : 'input', renderConversionOptimizer);
   });
 
@@ -3425,8 +3685,17 @@ function attachStaticListeners(): void {
     renderRetirementPhase();
   });
 
+  $('taxRateAuto').addEventListener('change', () => {
+    updatePlannerTaxControls();
+    persistPlannerInputs();
+    renderAll(true);
+  });
+
   plannerInputIds.forEach((id) => {
     $(id).addEventListener($(id).tagName === 'SELECT' ? 'change' : 'input', () => {
+      if (id === 'annualExpenses') syncRetireExpensesFromCurrent();
+      if (id === 'retireExpenses') plannerRetireExpensesCustom = $('retireExpenses').value !== $('annualExpenses').value;
+      updatePlannerTaxControls();
       persistPlannerInputs();
       if (id === 'currentAge') localStorage.setItem('fire_user_age', $(id).value);
       renderAll(true);
@@ -3442,6 +3711,8 @@ attachStaticListeners();
 hydratePlannerInputs();
 const savedRetirementAge = localStorage.getItem('fire_retirement_age');
 if (savedRetirementAge) $('retirementAge').value = savedRetirementAge;
+syncRetireExpensesFromCurrent();
+updatePlannerTaxControls();
 syncRetirementAgeDefault();
 
 renderAll();

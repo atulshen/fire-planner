@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   calcFederalIncomeTax,
   calcLongTermCapitalGainsTax,
+  calcPayrollTax,
   calcProgressiveTax,
+  calcTaxableSocialSecurity,
   getInflationAdjustedStandardDeduction,
   getMarginalRate,
   getTopOfOrdinaryBracketGrossIncome,
@@ -93,6 +95,37 @@ describe('calcFederalIncomeTax', () => {
     const currentYearTax = calcFederalIncomeTax(80000, 20000).totalTax;
     const laterYearTax = calcFederalIncomeTax(80000, 20000, 10, 0.03).totalTax;
     expect(laterYearTax).toBeLessThan(currentYearTax);
+  });
+});
+
+describe('calcPayrollTax', () => {
+  it('applies Social Security and Medicare payroll taxes to wage income', () => {
+    const result = calcPayrollTax(100000);
+    expect(result.socialSecurityTax).toBeCloseTo(6200, 6);
+    expect(result.medicareTax).toBeCloseTo(1450, 6);
+    expect(result.additionalMedicareTax).toBe(0);
+    expect(result.totalTax).toBeCloseTo(7650, 6);
+  });
+
+  it('caps Social Security tax at the wage base and adds Additional Medicare above $200k', () => {
+    const result = calcPayrollTax(250000);
+    expect(result.socialSecurityTax).toBeCloseTo(184500 * 0.062, 6);
+    expect(result.medicareTax).toBeCloseTo(250000 * 0.0145, 6);
+    expect(result.additionalMedicareTax).toBeCloseTo(50000 * 0.009, 6);
+  });
+});
+
+describe('calcTaxableSocialSecurity', () => {
+  it('returns zero below the provisional income threshold', () => {
+    expect(calcTaxableSocialSecurity(10000, 0, 20000)).toBe(0);
+  });
+
+  it('caps the first tier at 50% of benefits', () => {
+    expect(calcTaxableSocialSecurity(23000, 0, 20000)).toBeCloseTo(4000, 6);
+  });
+
+  it('caps overall taxable benefits at 85% of benefits', () => {
+    expect(calcTaxableSocialSecurity(100000, 20000, 30000)).toBeCloseTo(25500, 6);
   });
 });
 
