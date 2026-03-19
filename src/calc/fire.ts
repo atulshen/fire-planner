@@ -1,4 +1,5 @@
-import { estimateGoldPremium } from './aca';
+import { calcAcaSubsidyForYear, estimateGoldPremium } from './aca';
+import { calcPayrollTax, calcProgressiveTax } from './tax';
 import { getMedicareAnnualCost } from './medicare';
 
 export interface FirePlannerInputs {
@@ -9,7 +10,7 @@ export interface FirePlannerInputs {
   returnRate: number;
   inflationRate: number;
   withdrawalRate: number;
-  taxRate: number;
+  taxRate?: number | null;
   retireExpenses: number;
   longevityAge?: number;
   socialSecurityClaimAge?: number;
@@ -29,6 +30,7 @@ export interface FirePlannerResult {
   yearsToRetire: number | null;
   annualSavings: number;
   savingsRate: number;
+  currentEffectiveTaxRate: number;
   fireNumber: number;
   retirementFireNumber: number;
   longevityAge: number;
@@ -45,6 +47,8 @@ export interface FirePlannerResult {
   yearsToFire: number | null;
   projectedNetWorth: number;
   projectionAge: number;
+  capitalAt67: number;
+  capitalAt67Age: number;
   contributionsAtRetire: number;
   growthAtRetire: number;
   contributionsPct: number;
@@ -68,30 +72,61 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
   const returnRate = Math.max(inputs.returnRate || 0, 0) / 100;
   const inflationRate = Math.max(inputs.inflationRate || 0, 0) / 100;
   const withdrawalRate = Math.max(inputs.withdrawalRate || 0, 0.01) / 100;
-  const taxRate = clamp(inputs.taxRate || 0, 0, 100) / 100;
+  const manualTaxRate =
+    inputs.taxRate != null && Number.isFinite(inputs.taxRate)
+      ? clamp(inputs.taxRate, 0, 100) / 100
+      : null;
   const retireBaseExpenses = Math.max(inputs.retireExpenses || 0, 0);
   const longevityAge = clamp(inputs.longevityAge || 95, currentAge, MAX_PROJECTION_AGE);
   const socialSecurityClaimAge = inputs.socialSecurityClaimAge === 62 ? 62 : 67;
   const socialSecurityAnnualBenefit = Math.max(inputs.socialSecurityBenefit || 0, 0);
 
-  const netIncome = annualIncome * (1 - taxRate);
+  const inflate = (amount: number, yearOffset: number) => amount * Math.pow(1 + inflationRate, Math.max(yearOffset, 0));
+  const grossIncomeForYear = (yearOffset: number) => inflate(annualIncome, yearOffset);
+  const effectiveTaxRateForYear = (yearOffset: number) => {
+    if (manualTaxRate !== null) return manualTaxRate;
+    const grossIncome = grossIncomeForYear(yearOffset);
+    const incomeTax = calcProgressiveTax(grossIncome, yearOffset, inflationRate);
+    const payrollTax = calcPayrollTax(grossIncome, yearOffset, inflationRate);
+    return grossIncome > 0 ? (incomeTax.tax + payrollTax.totalTax) / grossIncome : 0;
+  };
+  const netIncomeForYear = (yearOffset: number) => {
+    const grossIncome = grossIncomeForYear(yearOffset);
+    if (manualTaxRate !== null) return grossIncome * (1 - manualTaxRate);
+    const incomeTax = calcProgressiveTax(grossIncome, yearOffset, inflationRate);
+    const payrollTax = calcPayrollTax(grossIncome, yearOffset, inflationRate);
+    return grossIncome - incomeTax.tax - payrollTax.totalTax;
+  };
+  const netIncome = netIncomeForYear(0);
   const annualSavings = netIncome - annualExpenses;
   const savingsRate = netIncome > 0 ? (annualSavings / netIncome) * 100 : 0;
+  const currentEffectiveTaxRate = effectiveTaxRateForYear(0) * 100;
   const maxYears = Math.max(longevityAge - currentAge, 0);
-  const inflate = (amount: number, yearOffset: number) => amount * Math.pow(1 + inflationRate, Math.max(yearOffset, 0));
-  const medicalCostForYear = (yearOffset: number) => {
-    const age = currentAge + yearOffset;
-    if (age < 65) {
-      return estimateGoldPremium(age) * 12 * Math.pow(1 + HEALTHCARE_INFLATION, yearOffset);
-    }
-    return getMedicareAnnualCost(age, 0, HEALTHCARE_INFLATION, age - 65).total;
-  };
-  const totalRetirementSpendForYear = (yearOffset: number) => inflate(retireBaseExpenses, yearOffset) + medicalCostForYear(yearOffset);
   const socialSecurityForYear = (yearOffset: number) => {
     const age = currentAge + yearOffset;
     if (socialSecurityAnnualBenefit <= 0 || age < socialSecurityClaimAge) return 0;
     return inflate(socialSecurityAnnualBenefit, yearOffset);
   };
+  const medicalCostForYear = (yearOffset: number) => {
+    const age = currentAge + yearOffset;
+    if (age < 65) {
+      const inflationFactor = Math.pow(1 + HEALTHCARE_INFLATION, yearOffset);
+      let annualCost = estimateGoldPremium(age) * 12 * inflationFactor;
+      const ss = socialSecurityForYear(yearOffset);
+      const livingSpend = inflate(retireBaseExpenses, yearOffset);
+      for (let i = 0; i < 4; i++) {
+        const totalSpend = livingSpend + annualCost;
+        const acaIncome = Math.max(totalSpend, ss);
+        const aca = calcAcaSubsidyForYear(acaIncome, age, yearOffset, inflationRate);
+        const updatedCost = aca.netPremium * inflationFactor;
+        if (Math.abs(updatedCost - annualCost) < 1) return updatedCost;
+        annualCost = updatedCost;
+      }
+      return annualCost;
+    }
+    return getMedicareAnnualCost(age, 0, HEALTHCARE_INFLATION, age - 65).total;
+  };
+  const totalRetirementSpendForYear = (yearOffset: number) => inflate(retireBaseExpenses, yearOffset) + medicalCostForYear(yearOffset);
   const retirementWithdrawalForYear = (yearOffset: number) => {
     return Math.max(totalRetirementSpendForYear(yearOffset) - socialSecurityForYear(yearOffset), 0);
   };
@@ -114,7 +149,7 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
       yearsToFire = y;
       break;
     }
-    const yearlySavings = netIncome - inflate(annualExpenses, y);
+    const yearlySavings = netIncomeForYear(y) - inflate(annualExpenses, y);
     balance = balance * (1 + returnRate) + yearlySavings;
   }
 
@@ -146,20 +181,23 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
       const withdrawalNeed = retirementWithdrawalForYear(y);
       balance += growth - withdrawalNeed;
     } else {
-      const yearlySavings = netIncome - inflate(annualExpenses, y);
+      const yearlySavings = netIncomeForYear(y) - inflate(annualExpenses, y);
       balance += growth + yearlySavings;
       totalContrib += yearlySavings;
     }
 
     totalGrowth += growth;
 
-    if (balance < 0 && retired) balance = 0;
+    if (balance < 0) balance = 0;
   }
 
   const referenceYear = yearsToRetire ?? projectionYears;
   const retirementFireNumber = fireTargets[referenceYear] ?? fireNumber;
   const projectedNetWorth = netWorths[referenceYear] ?? 0;
   const projectionAge = years[referenceYear] ?? currentAge;
+  const capitalAt67Age = Math.max(67, currentAge);
+  const capitalAt67Index = Math.min(Math.max(capitalAt67Age - currentAge, 0), netWorths.length - 1);
+  const capitalAt67 = netWorths[capitalAt67Index] ?? currentSavings;
   const estimatedMedicalAtRetirement = medicalCostForYear(referenceYear);
   const bridgePortfolioNeedToday = retireBaseExpenses + medicalCostForYear(0);
   const bridgePortfolioNeedAtRetirement = totalRetirementSpendForYear(referenceYear);
@@ -203,6 +241,7 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
     yearsToRetire,
     annualSavings,
     savingsRate,
+    currentEffectiveTaxRate,
     fireNumber,
     retirementFireNumber,
     longevityAge,
@@ -219,6 +258,8 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
     yearsToFire,
     projectedNetWorth,
     projectionAge,
+    capitalAt67,
+    capitalAt67Age,
     contributionsAtRetire,
     growthAtRetire,
     contributionsPct,

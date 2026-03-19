@@ -1159,6 +1159,35 @@
       margin-bottom: 1rem;
     }
 
+    .planner-optional {
+      margin-top: 1.1rem;
+      padding: 1rem 1rem 0;
+      background: linear-gradient(180deg, rgba(19, 23, 31, 0.9) 0%, rgba(15, 17, 23, 0.82) 100%);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .planner-optional-head {
+      margin-bottom: 0.9rem;
+    }
+
+    .planner-optional-head h3 {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .planner-tax-box {
+      margin-bottom: 1rem;
+      padding: 0.9rem 1rem;
+      background: rgba(10, 14, 20, 0.5);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+
     .planner-field label {
       display: block;
       font-size: 0.85rem;
