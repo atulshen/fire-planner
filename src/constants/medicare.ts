@@ -1,3 +1,5 @@
+import { PLANNING_BASE_YEAR } from './planning';
+
 export interface MedicareBase {
   partB: number;
   partD: number;
@@ -39,3 +41,5 @@ export const IRMAA_BRACKETS: IrmaaBracket[] = [
   { maxMagi: 500000, partBSurcharge: 5356,    partDSurcharge: 858 },
   { maxMagi: Infinity, partBSurcharge: 5965,  partDSurcharge: 943 },
 ];
+
+export const MEDICARE_PLANNING_BASELINE_LABEL = `${PLANNING_BASE_YEAR} planning baseline`;

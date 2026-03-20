@@ -9,7 +9,7 @@ import {
   getMarginalRate,
   getTopOfOrdinaryBracketGrossIncome,
 } from '../../src/calc/tax';
-import { STANDARD_DEDUCTION } from '../../src/constants/tax';
+import { STANDARD_DEDUCTION_BASELINE } from '../../src/constants/tax';
 
 describe('calcProgressiveTax', () => {
   it('returns zero tax for income at or below standard deduction', () => {
@@ -131,7 +131,7 @@ describe('calcTaxableSocialSecurity', () => {
 
 describe('inflation-adjusted bracket helpers', () => {
   it('inflates the standard deduction over time', () => {
-    expect(getInflationAdjustedStandardDeduction(10, 0.03)).toBeCloseTo(STANDARD_DEDUCTION * Math.pow(1.03, 10), 6);
+    expect(getInflationAdjustedStandardDeduction(10, 0.03)).toBeCloseTo(STANDARD_DEDUCTION_BASELINE * Math.pow(1.03, 10), 6);
   });
 
   it('inflates the gross-income target for the top of the 22% bracket', () => {

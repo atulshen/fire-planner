@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { getAcaContributionPct, calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, getAcaCliff } from '../../src/calc/aca';
-import { FPL_2025 } from '../../src/constants/aca';
+import { ACA_FPL_BASELINE } from '../../src/constants/aca';
 
 describe('getAcaContributionPct', () => {
   it('returns null below 100% FPL', () => {
@@ -8,19 +8,19 @@ describe('getAcaContributionPct', () => {
   });
 
   it('returns null above 400% FPL', () => {
-    expect(getAcaContributionPct(FPL_2025 * 4 + 1)).toBeNull();
+    expect(getAcaContributionPct(ACA_FPL_BASELINE * 4 + 1)).toBeNull();
   });
 
   it('returns ~2.1% at 100% FPL', () => {
-    expect(getAcaContributionPct(FPL_2025)).toBeCloseTo(0.021, 3);
+    expect(getAcaContributionPct(ACA_FPL_BASELINE)).toBeCloseTo(0.021, 3);
   });
 
   it('returns 9.96% at 300-400% FPL', () => {
-    expect(getAcaContributionPct(FPL_2025 * 3.5)).toBeCloseTo(0.0996, 3);
+    expect(getAcaContributionPct(ACA_FPL_BASELINE * 3.5)).toBeCloseTo(0.0996, 3);
   });
 
   it('interpolates between breakpoints', () => {
-    const pct = getAcaContributionPct(FPL_2025 * 1.5);
+    const pct = getAcaContributionPct(ACA_FPL_BASELINE * 1.5);
     expect(pct).not.toBeNull();
     expect(pct!).toBeGreaterThan(0.021);
     expect(pct!).toBeLessThan(0.066);
@@ -37,7 +37,7 @@ describe('calcAcaSubsidy', () => {
   });
 
   it('cliff: not eligible above 400% FPL', () => {
-    const cliff = FPL_2025 * 4;
+    const cliff = ACA_FPL_BASELINE * 4;
     const result = calcAcaSubsidy(cliff + 1, 50);
     expect(result.eligible).toBe(false);
     expect(result.medicaidEligible).toBe(false);
@@ -45,20 +45,20 @@ describe('calcAcaSubsidy', () => {
   });
 
   it('provides subsidy just below cliff', () => {
-    const justBelow = FPL_2025 * 3.99;
+    const justBelow = ACA_FPL_BASELINE * 3.99;
     const result = calcAcaSubsidy(justBelow, 50);
     expect(result.eligible).toBe(true);
     expect(result.subsidy).toBeGreaterThan(0);
   });
 
   it('subsidy is higher for lower incomes', () => {
-    const low = calcAcaSubsidy(FPL_2025 * 1.5, 50);
-    const high = calcAcaSubsidy(FPL_2025 * 3.5, 50);
+    const low = calcAcaSubsidy(ACA_FPL_BASELINE * 1.5, 50);
+    const high = calcAcaSubsidy(ACA_FPL_BASELINE * 3.5, 50);
     expect(low.subsidy).toBeGreaterThan(high.subsidy);
   });
 
   it('net premium is gold minus subsidy', () => {
-    const result = calcAcaSubsidy(FPL_2025 * 2.0, 50);
+    const result = calcAcaSubsidy(ACA_FPL_BASELINE * 2.0, 50);
     expect(result.netPremium).toBeCloseTo(result.goldPremium - result.subsidy, 0);
   });
 
@@ -86,8 +86,8 @@ describe('estimateBenchmarkPremium', () => {
 
 describe('getAcaCliff', () => {
   it('returns 400% of FPL', () => {
-    expect(getAcaCliff()).toBe(FPL_2025 * 4);
-    expect(getAcaCliff()).toBe(62600);
+    expect(getAcaCliff()).toBe(ACA_FPL_BASELINE * 4);
+    expect(getAcaCliff()).toBe(64200);
   });
 
   it('inflates the cliff over time', () => {

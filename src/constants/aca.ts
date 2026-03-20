@@ -1,4 +1,6 @@
-export const FPL_2025 = 15650; // single person, 48 states
+import { PLANNING_BASE_YEAR } from './planning';
+
+export const ACA_FPL_BASELINE = 16050; // 2026 planning baseline, single person, 48 states
 
 // Applicable percentage table: [FPL%, contribution% of income]
 export const ACA_CONTRIBUTION_TABLE = [
@@ -33,3 +35,5 @@ export const SILVER_BASE_21 = 625 / 1.278;
 
 // Gold plan base premium at age 21 ($650/mo avg Gold at age 40)
 export const GOLD_BASE_21 = 650 / 1.278;
+
+export const ACA_PLANNING_BASELINE_LABEL = `${PLANNING_BASE_YEAR} planning baseline`;
