@@ -157,6 +157,22 @@ export interface TaxEfficiencyMove {
   severity: number;
 }
 
+export type PortfolioRecommendationBucket = 'do_now' | 'future';
+export type PortfolioRecommendationAction = 'swap' | 'buy' | 'harvest' | 'future' | 'warning';
+export type PortfolioRecommendationTaxImpact = 'none' | 'low' | 'taxable_gain';
+
+export interface PortfolioRecommendation {
+  title: string;
+  summary: string;
+  amount: number;
+  priority: number;
+  bucket: PortfolioRecommendationBucket;
+  action: PortfolioRecommendationAction;
+  taxImpact: PortfolioRecommendationTaxImpact;
+  estimatedAnnualTaxDragSaved?: number;
+  tags?: string[];
+}
+
 export interface YieldCacheEntry {
   yield: number;
   price: number;

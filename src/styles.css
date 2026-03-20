@@ -309,7 +309,37 @@
     .suggestion-detail { flex: 1; }
     .suggestion-ticker { font-weight: 700; font-size: 0.9rem; }
     .suggestion-reason { font-size: 0.8rem; color: var(--muted); }
+    .suggestion-meta {
+      display: flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+      margin-top: 0.45rem;
+    }
+    .suggestion-meta span {
+      font-size: 0.72rem;
+      color: var(--muted);
+      padding: 0.12rem 0.45rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
     .suggestion-amount { font-weight: 600; font-size: 0.9rem; text-align: right; }
+    .suggestion-best {
+      margin-bottom: 1rem;
+      padding: 0.85rem;
+      border: 1px solid rgba(59,130,246,0.28);
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(30,58,95,0.28) 0%, rgba(15,17,23,0.92) 100%);
+    }
+    .suggestion-best .suggestion { padding-bottom: 0; border-bottom: none; }
+    .suggestion-best-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--blue);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
 
     /* Modal */
     .modal-overlay {

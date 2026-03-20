@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { analyzeTaxEfficiency } from '../../src/calc/tax-efficiency';
+import { analyzePortfolioRecommendations, analyzeTaxEfficiency } from '../../src/calc/tax-efficiency';
 import type { Holding } from '../../src/types';
 
 const makeHolding = (overrides: Partial<Holding>): Holding => ({
@@ -90,5 +90,64 @@ describe('analyzeTaxEfficiency', () => {
     expect(result.overallScore).toBe(100);
     expect(result.results[0].status).toBe('ok');
     expect(result.moves).toHaveLength(0);
+  });
+});
+
+describe('analyzePortfolioRecommendations', () => {
+  const targets = {
+    us_stock: 50,
+    intl_stock: 20,
+    bond: 15,
+    muni: 5,
+    reit: 5,
+    cash: 5,
+    crypto: 0,
+    other: 0,
+  } as const;
+
+  it('prioritizes IRA to Roth swaps ahead of future-only guidance', () => {
+    const holdings = [
+      makeHolding({ ticker: 'VTI', category: 'us_stock', account: 'ira', shares: 1000, price: 100 }),
+      makeHolding({ ticker: 'BND', category: 'bond', account: 'roth', shares: 1000, price: 100 }),
+      makeHolding({ ticker: 'VXUS', category: 'intl_stock', account: 'taxable', shares: 50, price: 100 }),
+    ];
+
+    const recommendations = analyzePortfolioRecommendations(holdings, targets);
+    expect(recommendations[0].action).toBe('swap');
+    expect(recommendations[0].bucket).toBe('do_now');
+    expect(recommendations[0].title).toContain('Swap');
+  });
+
+  it('uses taxable cash first for underweight categories', () => {
+    const holdings = [
+      makeHolding({ ticker: 'VMFXX', category: 'cash', account: 'taxable', shares: 500, price: 100 }),
+      makeHolding({ ticker: 'BND', category: 'bond', account: 'ira', shares: 100, price: 100 }),
+      makeHolding({ ticker: 'VXUS', category: 'intl_stock', account: 'taxable', shares: 100, price: 100 }),
+    ];
+
+    const recommendations = analyzePortfolioRecommendations(holdings, targets);
+    expect(recommendations.some((rec) => rec.action === 'buy' && rec.title.includes('Use taxable cash'))).toBe(true);
+  });
+
+  it('flags appreciated taxable misplacements as future actions with taxable gain warnings', () => {
+    const holdings = [
+      makeHolding({ ticker: 'BND', category: 'bond', account: 'taxable', shares: 100, price: 120, costBasis: 100 }),
+      makeHolding({ ticker: 'VTI', category: 'us_stock', account: 'roth', shares: 100, price: 100 }),
+    ];
+
+    const recommendations = analyzePortfolioRecommendations(holdings, targets);
+    const warning = recommendations.find((rec) => rec.action === 'warning');
+    expect(warning).toBeDefined();
+    expect(warning?.taxImpact).toBe('taxable_gain');
+    expect(warning?.bucket).toBe('future');
+  });
+
+  it('recommends tax-loss harvesting for meaningful taxable losses', () => {
+    const holdings = [
+      makeHolding({ ticker: 'VTI', category: 'us_stock', account: 'taxable', shares: 100, price: 90, costBasis: 100 }),
+    ];
+
+    const recommendations = analyzePortfolioRecommendations(holdings, targets);
+    expect(recommendations.some((rec) => rec.action === 'harvest' && rec.title.includes('Harvest loss'))).toBe(true);
   });
 });
