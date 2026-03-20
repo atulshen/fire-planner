@@ -5,6 +5,8 @@ import { holdings, yieldCache } from '../state/store';
 import { getHoldingYield } from '../state/income';
 import { getCompositeSplit } from '../calc/allocation';
 import { ACA_FPL_BASELINE, ACA_PLANNING_BASELINE_LABEL } from '../constants/aca';
+import { DEFAULT_FOREIGN_TAX_CREDIT_RATIO_BOND, DEFAULT_FOREIGN_TAX_CREDIT_RATIO_STOCK, FOREIGN_TAX_CREDIT_RATIO_BY_TICKER } from '../constants/foreign-tax';
+import { calcFederalIncomeTax, calcNetInvestmentIncomeTax, estimateForeignTaxCredit } from '../calc/tax';
 
 interface IncomeItem {
   ticker: string;
@@ -63,12 +65,24 @@ export function renderInvestmentIncome(): void {
     }
   }
 
+  const plannerState = (() => {
+    try {
+      return JSON.parse(localStorage.getItem('fire_planner_inputs') || '{}') as { annualIncome?: number | string; filingStatus?: string };
+    } catch {
+      return {};
+    }
+  })();
+  const plannerEarnedIncome = Number(plannerState.annualIncome || 0) || 0;
+  const filingStatus = plannerState.filingStatus === 'married' ? 'married' : 'single';
+
   // Qualified vs ordinary
-  let qualifiedIncome = 0, ordinaryIncome = 0;
+  let qualifiedIncome = 0, ordinaryIncome = 0, foreignSourceIncome = 0, foreignTaxPaid = 0;
   for (const item of byAccount.taxable) {
     if (item.isMuni) continue;
     const h = holdings.find(hh => hh.ticker === item.ticker && hh.account === 'taxable');
     const split = h ? getCompositeSplit(h) : null;
+    const ratio = FOREIGN_TAX_CREDIT_RATIO_BY_TICKER[item.ticker.toUpperCase()]
+      ?? (item.category === 'bond' ? DEFAULT_FOREIGN_TAX_CREDIT_RATIO_BOND : DEFAULT_FOREIGN_TAX_CREDIT_RATIO_STOCK);
     if (split) {
       const stockPct = (split.us_stock || 0) + (split.intl_stock || 0);
       const muniPct = split.muni || 0;
@@ -76,10 +90,20 @@ export function renderInvestmentIncome(): void {
       qualifiedIncome += item.income * stockPct;
       ordinaryIncome += item.income * bondPct;
       muniIncome += item.income * muniPct;
+      foreignSourceIncome += item.income * (split.intl_stock || 0);
+      foreignTaxPaid += item.income * (split.intl_stock || 0) * ratio;
     } else if (['bond', 'reit', 'cash'].includes(item.category)) {
       ordinaryIncome += item.income;
+      if (item.category === 'bond' && item.ticker.toUpperCase() === 'BNDX') {
+        foreignSourceIncome += item.income;
+        foreignTaxPaid += item.income * ratio;
+      }
     } else {
       qualifiedIncome += item.income;
+      if (item.category === 'intl_stock') {
+        foreignSourceIncome += item.income;
+        foreignTaxPaid += item.income * ratio;
+      }
     }
   }
 
@@ -88,6 +112,14 @@ export function renderInvestmentIncome(): void {
   const shelteredIncome = totalIncome - magiFromDividends;
   const totalMagi = magiFromDividends;
   const conversionRoom = Math.max(cliffAmt - totalMagi - 1000, 0);
+  const estimatedFederalTax = calcFederalIncomeTax(plannerEarnedIncome + ordinaryIncome, qualifiedIncome).totalTax;
+  const ftc = estimateForeignTaxCredit(
+    foreignTaxPaid,
+    foreignSourceIncome,
+    plannerEarnedIncome + ordinaryIncome + qualifiedIncome,
+    estimatedFederalTax,
+  );
+  const niit = calcNetInvestmentIncomeTax(plannerEarnedIncome + ordinaryIncome + qualifiedIncome, taxableIncome, filingStatus);
 
   // Summary stats
   const summaryHtml = `
@@ -124,6 +156,21 @@ export function renderInvestmentIncome(): void {
         <div class="stat-label">Ordinary Income (taxed as income)</div>
         <div class="stat-value" style="color:${ordinaryIncome > 0 ? 'var(--red)' : 'var(--accent)'}">$${fmt(Math.round(ordinaryIncome))}</div>
       </div>
+      ${foreignSourceIncome > 0 ? `<div class="stat-card">
+        <div class="stat-label">Intl Dividend Income</div>
+        <div class="stat-value" style="color:var(--blue)">$${fmt(Math.round(foreignSourceIncome))}</div>
+        <div style="font-size:0.65rem;color:var(--muted);margin-top:2px;">Estimated foreign-source income from taxable international holdings</div>
+      </div>` : ''}
+      ${foreignTaxPaid > 0 ? `<div class="stat-card">
+        <div class="stat-label">Estimated FTC</div>
+        <div class="stat-value" style="color:var(--accent)">$${fmt(Math.round(ftc.allowableCredit))}</div>
+        <div style="font-size:0.65rem;color:var(--muted);margin-top:2px;">$${fmt(Math.round(foreignTaxPaid))} paid, $${fmt(Math.round(ftc.limitation))} limit</div>
+      </div>` : ''}
+      ${niit.tax > 0 ? `<div class="stat-card">
+        <div class="stat-label">Estimated NIIT</div>
+        <div class="stat-value" style="color:var(--red)">$${fmt(Math.round(niit.tax))}</div>
+        <div style="font-size:0.65rem;color:var(--muted);margin-top:2px;">3.8% surtax using planner filing status and earned-income baseline</div>
+      </div>` : ''}
     </div>`;
 
   // Conversion room callout
@@ -136,6 +183,9 @@ export function renderInvestmentIncome(): void {
             Retirement MAGI is modeled as investment income only. Current MAGI-relevant investment income is <strong style="color:var(--text)">$${fmt(Math.round(totalMagi))}</strong>.
             ACA cliff at $${fmt(Math.round(cliffAmt))} on the ${ACA_PLANNING_BASELINE_LABEL}.
           </div>
+          ${(foreignTaxPaid > 0 || niit.tax > 0) ? `<div style="font-size:0.78rem;color:var(--muted);margin-top:0.45rem;">
+            Tax estimates assume qualified dividends remain eligible for long-term capital-gains rates, NIIT uses the current planner filing status and earned-income baseline, and the foreign tax credit is estimated from taxable international dividends subject to an FTC limitation.
+          </div>` : ''}
         </div>
         <div style="text-align:right;">
           <div style="font-size:1.4rem;font-weight:700;color:${conversionRoom > 10000 ? 'var(--accent)' : conversionRoom > 0 ? 'var(--orange)' : 'var(--red)'}">
