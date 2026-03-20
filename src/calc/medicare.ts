@@ -1,4 +1,5 @@
 import { MEDICARE_BASE, MEDICARE_OOP_BY_AGE, IRMAA_BRACKETS } from '../constants/medicare';
+import { PLANNING_GROWTH_RATES } from '../constants/planning';
 
 export interface IrmaaSurcharge {
   partB: number;
@@ -32,7 +33,12 @@ export function getIrmaaSurcharge(magi: number): IrmaaSurcharge {
  * and number of years since age 65.
  * Includes base premiums, out-of-pocket, and IRMAA surcharges, all adjusted for inflation.
  */
-export function getMedicareAnnualCost(age: number, magi: number, inflation: number, yearsFrom65: number): MedicareAnnualCost {
+export function getMedicareAnnualCost(
+  age: number,
+  magi: number,
+  inflation = PLANNING_GROWTH_RATES.healthcareCosts,
+  yearsFrom65: number,
+): MedicareAnnualCost {
   const inflationFactor = Math.pow(1 + inflation, yearsFrom65);
   const basePremiums = (MEDICARE_BASE.partB + MEDICARE_BASE.partD + MEDICARE_BASE.partBDeductible + MEDICARE_BASE.medigap) * inflationFactor;
   const oopAge = Math.min(Math.max(age, 65), 100);

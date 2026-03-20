@@ -39,6 +39,10 @@ import { renderSymbolCatalogPage } from './render/symbol-catalog';
 import { calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, estimateGoldPremium, getAcaCliff } from './calc/aca';
 import { calcFederalIncomeTax, calcPayrollTax, calcProgressiveTax, calcTaxableSocialSecurity, getTopOfOrdinaryBracketGrossIncome } from './calc/tax';
 import { getIrmaaSurcharge, getMedicareAnnualCost } from './calc/medicare';
+import { ACA_FPL_BASELINE, ACA_PLANNING_BASELINE_LABEL } from './constants/aca';
+import { IRMAA_BRACKETS, MEDICARE_PLANNING_BASELINE_LABEL } from './constants/medicare';
+import { PLANNING_GROWTH_RATES } from './constants/planning';
+import { TAX_PLANNING_BASELINE_LABEL } from './constants/tax';
 import { simulateDrawdown, getRmdFactor } from './calc/drawdown';
 import { guessAccountType, guessCategory } from './calc/category';
 import { calculateFirePlan } from './calc/fire';
@@ -905,8 +909,8 @@ function updatePlannerTaxControls(): void {
   const autoRate = grossIncome > 0 ? ((incomeTax.tax + payrollTax.totalTax) / grossIncome) * 100 : 0;
   taxInput.disabled = autoInput.checked;
   hint.textContent = autoInput.checked
-    ? `Auto: ${autoRate.toFixed(1)}% effective tax from federal income tax plus employee Social Security and Medicare`
-    : `Override: use your own all-in effective tax rate instead of the automatic federal and payroll tax estimate`;
+    ? `Auto: ${autoRate.toFixed(1)}% effective tax from the ${TAX_PLANNING_BASELINE_LABEL} federal income tax plus employee Social Security and Medicare`
+    : `Override: use your own all-in effective tax rate instead of the automatic ${TAX_PLANNING_BASELINE_LABEL} federal and payroll estimate`;
 }
 
 function renderPlanner(forceChart = false, syncRetirementAge = true): void {
@@ -1280,7 +1284,7 @@ function renderHcAgeTable(): void {
   const earned = 0;
   const inv = getInvestmentIncome();
   const income = earned + inv.total;
-  const fplRatio = income / 15650;
+  const fplRatio = income / ACA_FPL_BASELINE;
   const cliffAmt = getAcaCliff();
 
   $('hcIncomeDisplay').textContent = `$${fmt(Math.round(income))}`;
@@ -1395,7 +1399,7 @@ function renderHcAgeTable(): void {
       </table>
     </div>
     <div style="margin-top:0.75rem;font-size:0.78rem;color:var(--muted);">
-      Gold plan premiums estimated using 2026 national averages ($650/mo at age 40) with the federal ACA age curve.
+      Gold plan premiums estimated using the ${ACA_PLANNING_BASELINE_LABEL} national averages ($650/mo at age 40) with the federal ACA age curve.
       Subsidies calculated against the Silver benchmark ($625/mo at age 40). Actual premiums vary by location.
       <span style="display:inline-flex;align-items:center;gap:0.3rem;margin-left:0.5rem;">
         <span class="dot" style="width:8px;height:8px;border-radius:2px;background:var(--muted);display:inline-block;"></span> Full premium
@@ -1406,10 +1410,12 @@ function renderHcAgeTable(): void {
 
 function renderHcIncomeTable(): void {
   const age = Math.min(readRetirementAge(), 64);
-  const incomes = [15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000, 55000, 60000, 62000, 62600, 63000, 65000, 70000, 80000, 100000, 120000];
+  const cliffAmt = Math.round(getAcaCliff());
+  const incomes = [15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000, 55000, 60000, cliffAmt - 1000, cliffAmt, cliffAmt + 500, 65000, 70000, 80000, 100000, 120000]
+    .filter((income, index, arr) => income > 0 && arr.indexOf(income) === index)
+    .sort((a, b) => a - b);
   const goldMonthly = estimateGoldPremium(age);
   const goldAnnual = goldMonthly * 12;
-  const cliffAmt = Math.round(getAcaCliff());
 
   $('hcIncomeTable').innerHTML = `
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;">
@@ -1419,7 +1425,7 @@ function renderHcIncomeTable(): void {
         </tr></thead>
         <tbody>${incomes.map((inc, index) => {
           const aca = calcAcaSubsidy(inc, age);
-          const fplPct = fmtD((inc / 15650) * 100, 0);
+          const fplPct = fmtD((inc / ACA_FPL_BASELINE) * 100, 0);
           const prev = incomes[index - 1] || 0;
           const isCliff = inc > cliffAmt && prev <= cliffAmt;
           const atCliff = Math.abs(inc - cliffAmt) < 1000;
@@ -1443,8 +1449,8 @@ function renderHcIncomeTable(): void {
     </div>
     <div style="margin-top:0.75rem;font-size:0.78rem;color:var(--muted);">
       All values for a ${age}-year-old on a Gold plan ($${fmt(goldMonthly)}/mo full price).
-      <span style="color:var(--red);">Red line</span> marks the 400% FPL subsidy cliff at $${fmt(cliffAmt)}.
-      At $62,600 you get ~$${fmt(calcAcaSubsidy(62600, age).subsidy)}/yr in subsidies. At $63,000 you get nothing.
+      <span style="color:var(--red);">Red line</span> marks the 400% FPL subsidy cliff at $${fmt(cliffAmt)} on the ${ACA_PLANNING_BASELINE_LABEL}.
+      Near the cliff, a small MAGI increase can eliminate the modeled subsidy entirely.
     </div>`;
 }
 
@@ -1452,7 +1458,7 @@ function renderMedicareProjection(): void {
   const userAge = readRetirementAge();
   const lifeExp = readInt('coLifeExp', 90);
   const magi = getMagi() || 30000;
-  const inflation = 0.03;
+  const inflation = PLANNING_GROWTH_RATES.healthcareCosts;
 
   if (userAge > lifeExp) {
     $('medicareSummaryRow').innerHTML = '';
@@ -1500,7 +1506,7 @@ function renderMedicareProjection(): void {
     <div class="dd-summary-card">
       <div class="label">Avg Annual Cost</div>
       <div class="value">$${fmt(yearsOnMedicare > 0 ? Math.round(totalAll / yearsOnMedicare) : 0)}</div>
-      <div class="sub">Including ${fmtD(inflation * 100, 0)}% healthcare inflation</div>
+      <div class="sub">Including ${fmtD(inflation * 100, 0)}% annual healthcare cost growth</div>
     </div>`;
 
   const pre65Note = userAge < 65
@@ -1549,7 +1555,7 @@ function renderMedicareProjection(): void {
 
   $('medicareSources').innerHTML = `
     <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:1rem 1.25rem;margin-top:1rem;">
-      <div style="font-size:0.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.75rem;">IRMAA Income Brackets (2026)</div>
+      <div style="font-size:0.8rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:0.75rem;">IRMAA Income Brackets (${MEDICARE_PLANNING_BASELINE_LABEL})</div>
       <div style="font-size:0.82rem;color:var(--text);line-height:1.6;">
         IRMAA surcharges apply to Part B and Part D premiums when your MAGI (from 2 years prior) exceeds thresholds.
         Your current MAGI of <strong>$${fmt(magi)}</strong> ${irmaaInfo.total > 0 ? `triggers <span style="color:var(--red);">$${fmt(irmaaInfo.total)}/yr</span> in surcharges` : 'is <span style="color:var(--accent);">below the $106K threshold</span> — no surcharges'}.
@@ -1561,14 +1567,7 @@ function renderMedicareProjection(): void {
           <th style="text-align:right;padding:0.3rem 0.5rem;color:var(--muted);">Part D Extra</th>
           <th style="text-align:right;padding:0.3rem 0.5rem;color:var(--muted);">Total/yr</th>
         </tr></thead>
-        <tbody>${[
-          { maxMagi: 106000, partBSurcharge: 0, partDSurcharge: 0 },
-          { maxMagi: 133000, partBSurcharge: 972, partDSurcharge: 149 },
-          { maxMagi: 167000, partBSurcharge: 2434, partDSurcharge: 385 },
-          { maxMagi: 200000, partBSurcharge: 3895, partDSurcharge: 622 },
-          { maxMagi: 500000, partBSurcharge: 5356, partDSurcharge: 858 },
-          { maxMagi: Infinity, partBSurcharge: 5965, partDSurcharge: 943 },
-        ].map((b, i, arr) => {
+        <tbody>${IRMAA_BRACKETS.map((b, i, arr) => {
           const prev = i > 0 ? arr[i - 1].maxMagi : 0;
           const label = b.maxMagi === Infinity ? '> $500K' : (i === 0 ? `≤ $${fmt(b.maxMagi)}` : `$${fmt(prev + 1)} – $${fmt(b.maxMagi)}`);
           const active = magi <= b.maxMagi && (i === 0 || magi > arr[i - 1].maxMagi);

@@ -1,7 +1,8 @@
 import type { TaxBracket, TaxLocationRule, AccountType, CategoryKey } from '../types';
+import { PLANNING_BASE_YEAR } from './planning';
 
-// 2026 OBBBA tax brackets (single filer)
-export const TAX_BRACKETS_2026: TaxBracket[] = [
+// 2026 planning baseline tax brackets (single filer)
+export const ORDINARY_TAX_BRACKETS_BASELINE: TaxBracket[] = [
   { min: 0, max: 12400, rate: 0.10 },
   { min: 12400, max: 50400, rate: 0.12 },
   { min: 50400, max: 105700, rate: 0.22 },
@@ -11,19 +12,21 @@ export const TAX_BRACKETS_2026: TaxBracket[] = [
   { min: 640600, max: Infinity, rate: 0.37 },
 ];
 
-export const STANDARD_DEDUCTION = 16100; // 2026 single
-export const SOCIAL_SECURITY_WAGE_BASE_2026 = 184500;
+export const STANDARD_DEDUCTION_BASELINE = 16100; // 2026 single
+export const SOCIAL_SECURITY_WAGE_BASE_BASELINE = 184500;
 export const SOCIAL_SECURITY_PAYROLL_RATE = 0.062;
 export const MEDICARE_PAYROLL_RATE = 0.0145;
 export const ADDITIONAL_MEDICARE_RATE = 0.009;
 export const ADDITIONAL_MEDICARE_THRESHOLD_SINGLE = 200000;
 
-// 2026 long-term capital gains brackets (single filer), taxable income basis
-export const LTCG_BRACKETS_2026: TaxBracket[] = [
+// 2026 planning baseline long-term capital gains brackets (single filer), taxable income basis
+export const LTCG_TAX_BRACKETS_BASELINE: TaxBracket[] = [
   { min: 0, max: 49450, rate: 0.00 },
   { min: 49450, max: 545500, rate: 0.15 },
   { min: 545500, max: Infinity, rate: 0.20 },
 ];
+
+export const TAX_PLANNING_BASELINE_LABEL = `${PLANNING_BASE_YEAR} planning baseline`;
 
 // RMD distribution periods by age (from IRS Uniform Lifetime Table)
 export const RMD_TABLE: Record<number, number> = {

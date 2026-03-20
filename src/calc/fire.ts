@@ -1,6 +1,7 @@
 import { calcAcaSubsidyForYear, estimateGoldPremium } from './aca';
 import { calcPayrollTax, calcProgressiveTax } from './tax';
 import { getMedicareAnnualCost } from './medicare';
+import { PLANNING_GROWTH_RATES } from '../constants/planning';
 
 export interface FirePlannerInputs {
   currentAge: number;
@@ -62,7 +63,7 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 const MAX_PROJECTION_AGE = 100;
-const HEALTHCARE_INFLATION = 0.03;
+const HEALTHCARE_INFLATION = PLANNING_GROWTH_RATES.healthcareCosts;
 
 export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult {
   const currentAge = clamp(inputs.currentAge || 0, 18, 100);

@@ -4,7 +4,7 @@ import { fmt, fmtD, fmtK } from '../utils/format';
 import { holdings, yieldCache } from '../state/store';
 import { getHoldingYield } from '../state/income';
 import { getCompositeSplit } from '../calc/allocation';
-import { FPL_2025 } from '../constants/aca';
+import { ACA_FPL_BASELINE, ACA_PLANNING_BASELINE_LABEL } from '../constants/aca';
 
 interface IncomeItem {
   ticker: string;
@@ -40,7 +40,7 @@ export function renderInvestmentIncome(): void {
     $('yieldFreshness').style.color = 'var(--muted)';
   }
 
-  const cliffAmt = FPL_2025 * 4;
+  const cliffAmt = ACA_FPL_BASELINE * 4;
 
   // Calculate income by account and holding
   const byAccount: Record<AccountType, IncomeItem[]> = { roth: [], hsa: [], ira: [], taxable: [] };
@@ -134,7 +134,7 @@ export function renderInvestmentIncome(): void {
           <div style="font-size:0.75rem;text-transform:uppercase;font-weight:600;color:var(--muted);letter-spacing:0.04em;margin-bottom:0.25rem;">Roth Conversion Room (under ACA cliff)</div>
           <div style="font-size:0.85rem;color:var(--muted);">
             Retirement MAGI is modeled as investment income only. Current MAGI-relevant investment income is <strong style="color:var(--text)">$${fmt(Math.round(totalMagi))}</strong>.
-            ACA cliff at $${fmt(Math.round(cliffAmt))}.
+            ACA cliff at $${fmt(Math.round(cliffAmt))} on the ${ACA_PLANNING_BASELINE_LABEL}.
           </div>
         </div>
         <div style="text-align:right;">

@@ -1,44 +1,45 @@
 import {
   ADDITIONAL_MEDICARE_RATE,
   ADDITIONAL_MEDICARE_THRESHOLD_SINGLE,
-  LTCG_BRACKETS_2026,
+  LTCG_TAX_BRACKETS_BASELINE,
   MEDICARE_PAYROLL_RATE,
+  ORDINARY_TAX_BRACKETS_BASELINE,
   SOCIAL_SECURITY_PAYROLL_RATE,
-  SOCIAL_SECURITY_WAGE_BASE_2026,
-  STANDARD_DEDUCTION,
-  TAX_BRACKETS_2026,
+  SOCIAL_SECURITY_WAGE_BASE_BASELINE,
+  STANDARD_DEDUCTION_BASELINE,
 } from '../constants/tax';
+import { PLANNING_GROWTH_RATES, scalePlanningAmount, scalePlanningBrackets } from '../constants/planning';
 import type { TaxBracket, TaxResult } from '../types';
 
 const SS_BASE_AMOUNT_SINGLE = 25000;
 const SS_ADJUSTED_BASE_SINGLE = 34000;
 
-function inflateAmount(amount: number, yearsFromStart = 0, inflationRate = 0): number {
-  return amount * Math.pow(1 + inflationRate, yearsFromStart);
+export function getInflationAdjustedStandardDeduction(
+  yearsFromStart = 0,
+  inflationRate = PLANNING_GROWTH_RATES.federalThresholds,
+): number {
+  return scalePlanningAmount(STANDARD_DEDUCTION_BASELINE, yearsFromStart, inflationRate);
 }
 
-function inflateBrackets(brackets: TaxBracket[], yearsFromStart = 0, inflationRate = 0): TaxBracket[] {
-  return brackets.map((bracket) => ({
-    min: inflateAmount(bracket.min, yearsFromStart, inflationRate),
-    max: Number.isFinite(bracket.max) ? inflateAmount(bracket.max, yearsFromStart, inflationRate) : Infinity,
-    rate: bracket.rate,
-  }));
+export function getInflationAdjustedSocialSecurityWageBase(
+  yearsFromStart = 0,
+  inflationRate = PLANNING_GROWTH_RATES.federalThresholds,
+): number {
+  return scalePlanningAmount(SOCIAL_SECURITY_WAGE_BASE_BASELINE, yearsFromStart, inflationRate);
 }
 
-export function getInflationAdjustedStandardDeduction(yearsFromStart = 0, inflationRate = 0): number {
-  return inflateAmount(STANDARD_DEDUCTION, yearsFromStart, inflationRate);
+export function getInflationAdjustedOrdinaryBrackets(
+  yearsFromStart = 0,
+  inflationRate = PLANNING_GROWTH_RATES.federalThresholds,
+): TaxBracket[] {
+  return scalePlanningBrackets(ORDINARY_TAX_BRACKETS_BASELINE, yearsFromStart, inflationRate);
 }
 
-export function getInflationAdjustedSocialSecurityWageBase(yearsFromStart = 0, inflationRate = 0): number {
-  return inflateAmount(SOCIAL_SECURITY_WAGE_BASE_2026, yearsFromStart, inflationRate);
-}
-
-export function getInflationAdjustedOrdinaryBrackets(yearsFromStart = 0, inflationRate = 0): TaxBracket[] {
-  return inflateBrackets(TAX_BRACKETS_2026, yearsFromStart, inflationRate);
-}
-
-export function getInflationAdjustedLtcgBrackets(yearsFromStart = 0, inflationRate = 0): TaxBracket[] {
-  return inflateBrackets(LTCG_BRACKETS_2026, yearsFromStart, inflationRate);
+export function getInflationAdjustedLtcgBrackets(
+  yearsFromStart = 0,
+  inflationRate = PLANNING_GROWTH_RATES.federalThresholds,
+): TaxBracket[] {
+  return scalePlanningBrackets(LTCG_TAX_BRACKETS_BASELINE, yearsFromStart, inflationRate);
 }
 
 export function getTopOfOrdinaryBracketGrossIncome(
@@ -100,7 +101,7 @@ export function calcPayrollTax(
 
 /**
  * Calculate progressive federal income tax for a given gross income (single filer).
- * Applies standard deduction automatically.
+ * Uses the 2026 planning baseline and applies the standard deduction automatically.
  */
 export function calcProgressiveTax(income: number, yearsFromStart = 0, inflationRate = 0): TaxResult {
   const deduction = getInflationAdjustedStandardDeduction(yearsFromStart, inflationRate);
@@ -120,7 +121,8 @@ export function calcProgressiveTax(income: number, yearsFromStart = 0, inflation
 
 /**
  * Calculate federal long-term capital gains tax for a single filer.
- * The standard deduction is applied against ordinary income first and then any remaining deduction shelters gains.
+ * Uses the 2026 planning baseline. The standard deduction is applied against
+ * ordinary income first and then any remaining deduction shelters gains.
  */
 export function calcLongTermCapitalGainsTax(
   ordinaryIncome: number,

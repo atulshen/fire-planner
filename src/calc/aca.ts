@@ -1,4 +1,5 @@
-import { FPL_2025, ACA_CONTRIBUTION_TABLE, ACA_AGE_FACTORS, SILVER_BASE_21, GOLD_BASE_21 } from '../constants/aca';
+import { ACA_AGE_FACTORS, ACA_CONTRIBUTION_TABLE, ACA_FPL_BASELINE, GOLD_BASE_21, SILVER_BASE_21 } from '../constants/aca';
+import { PLANNING_GROWTH_RATES, scalePlanningAmount } from '../constants/planning';
 import { fmt } from '../utils/format';
 
 /**
@@ -6,7 +7,7 @@ import { fmt } from '../utils/format';
  * Returns null if not eligible (below 100% FPL or above 400% FPL).
  */
 export function getAcaContributionPct(income: number): number | null {
-  return getAcaContributionPctForFpl(income, FPL_2025);
+  return getAcaContributionPctForFpl(income, ACA_FPL_BASELINE);
 }
 
 export function getAcaContributionPctForFpl(income: number, fpl: number): number | null {
@@ -54,8 +55,11 @@ export interface AcaSubsidyResult {
   fplRatio: number;
 }
 
-export function getAcaFpl(yearsFromBase = 0, inflationRate = 0): number {
-  return FPL_2025 * Math.pow(1 + inflationRate, Math.max(yearsFromBase, 0));
+export function getAcaFpl(
+  yearsFromBase = 0,
+  inflationRate = PLANNING_GROWTH_RATES.acaThresholds,
+): number {
+  return scalePlanningAmount(ACA_FPL_BASELINE, yearsFromBase, inflationRate);
 }
 
 export function calcAcaSubsidyForFpl(magi: number, age: number, fpl: number): AcaSubsidyResult {
@@ -121,7 +125,7 @@ export function calcAcaSubsidyForYear(magi: number, age: number, yearsFromBase =
  * Calculate ACA subsidy for a given MAGI and age.
  */
 export function calcAcaSubsidy(magi: number, age: number): AcaSubsidyResult {
-  return calcAcaSubsidyForFpl(magi, age, FPL_2025);
+  return calcAcaSubsidyForFpl(magi, age, ACA_FPL_BASELINE);
 }
 
 /**
