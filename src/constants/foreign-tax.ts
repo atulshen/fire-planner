@@ -1,0 +1,12 @@
+export const FOREIGN_TAX_CREDIT_RATIO_BY_TICKER: Record<string, number> = {
+  VXUS: 0.0711,
+  VEA: 0.0646,
+  VWO: 0.1093,
+  VEU: 0.0826,
+  VTIAX: 0.0711,
+  VFWAX: 0.0826,
+  BNDX: 0.0017,
+};
+
+export const DEFAULT_FOREIGN_TAX_CREDIT_RATIO_STOCK = 0.08;
+export const DEFAULT_FOREIGN_TAX_CREDIT_RATIO_BOND = 0.002;

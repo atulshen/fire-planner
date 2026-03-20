@@ -3,13 +3,16 @@ import {
   ADDITIONAL_MEDICARE_THRESHOLD_SINGLE,
   LTCG_TAX_BRACKETS_BASELINE,
   MEDICARE_PAYROLL_RATE,
+  NET_INVESTMENT_INCOME_TAX_RATE,
+  NET_INVESTMENT_INCOME_TAX_THRESHOLD_MARRIED,
+  NET_INVESTMENT_INCOME_TAX_THRESHOLD_SINGLE,
   ORDINARY_TAX_BRACKETS_BASELINE,
   SOCIAL_SECURITY_PAYROLL_RATE,
   SOCIAL_SECURITY_WAGE_BASE_BASELINE,
   STANDARD_DEDUCTION_BASELINE,
 } from '../constants/tax';
 import { PLANNING_GROWTH_RATES, scalePlanningAmount, scalePlanningBrackets } from '../constants/planning';
-import type { TaxBracket, TaxResult } from '../types';
+import type { FilingStatus, TaxBracket, TaxResult } from '../types';
 
 const SS_BASE_AMOUNT_SINGLE = 25000;
 const SS_ADJUSTED_BASE_SINGLE = 34000;
@@ -171,6 +174,50 @@ export function calcFederalIncomeTax(
     capitalGainsTax,
     totalTax: ordinaryTax + capitalGainsTax,
     effectiveRate: grossIncome > 0 ? (ordinaryTax + capitalGainsTax) / grossIncome : 0,
+  };
+}
+
+export function getNetInvestmentIncomeTaxThreshold(filingStatus: FilingStatus = 'single'): number {
+  return filingStatus === 'married'
+    ? NET_INVESTMENT_INCOME_TAX_THRESHOLD_MARRIED
+    : NET_INVESTMENT_INCOME_TAX_THRESHOLD_SINGLE;
+}
+
+export function calcNetInvestmentIncomeTax(
+  magi: number,
+  netInvestmentIncome: number,
+  filingStatus: FilingStatus = 'single',
+): TaxResult {
+  const threshold = getNetInvestmentIncomeTaxThreshold(filingStatus);
+  const taxableBase = Math.min(
+    Math.max(magi - threshold, 0),
+    Math.max(netInvestmentIncome, 0),
+  );
+  const tax = taxableBase * NET_INVESTMENT_INCOME_TAX_RATE;
+  return {
+    tax,
+    effectiveRate: netInvestmentIncome > 0 ? tax / netInvestmentIncome : 0,
+  };
+}
+
+export function estimateForeignTaxCredit(
+  foreignTaxPaid: number,
+  foreignSourceIncome: number,
+  totalTaxableIncome: number,
+  regularFederalTax: number,
+): {
+  limitation: number;
+  allowableCredit: number;
+  disallowedCredit: number;
+} {
+  const limitation = totalTaxableIncome > 0
+    ? regularFederalTax * Math.min(Math.max(foreignSourceIncome, 0) / totalTaxableIncome, 1)
+    : 0;
+  const allowableCredit = Math.min(Math.max(foreignTaxPaid, 0), limitation);
+  return {
+    limitation,
+    allowableCredit,
+    disallowedCredit: Math.max(foreignTaxPaid - allowableCredit, 0),
   };
 }
 

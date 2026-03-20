@@ -18,6 +18,9 @@ export const SOCIAL_SECURITY_PAYROLL_RATE = 0.062;
 export const MEDICARE_PAYROLL_RATE = 0.0145;
 export const ADDITIONAL_MEDICARE_RATE = 0.009;
 export const ADDITIONAL_MEDICARE_THRESHOLD_SINGLE = 200000;
+export const NET_INVESTMENT_INCOME_TAX_RATE = 0.038;
+export const NET_INVESTMENT_INCOME_TAX_THRESHOLD_SINGLE = 200000;
+export const NET_INVESTMENT_INCOME_TAX_THRESHOLD_MARRIED = 250000;
 
 // 2026 planning baseline long-term capital gains brackets (single filer), taxable income basis
 export const LTCG_TAX_BRACKETS_BASELINE: TaxBracket[] = [

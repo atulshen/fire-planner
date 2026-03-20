@@ -2,10 +2,13 @@ import { describe, it, expect } from 'vitest';
 import {
   calcFederalIncomeTax,
   calcLongTermCapitalGainsTax,
+  calcNetInvestmentIncomeTax,
   calcPayrollTax,
   calcProgressiveTax,
   calcTaxableSocialSecurity,
+  estimateForeignTaxCredit,
   getInflationAdjustedStandardDeduction,
+  getNetInvestmentIncomeTaxThreshold,
   getMarginalRate,
   getTopOfOrdinaryBracketGrossIncome,
 } from '../../src/calc/tax';
@@ -95,6 +98,30 @@ describe('calcFederalIncomeTax', () => {
     const currentYearTax = calcFederalIncomeTax(80000, 20000).totalTax;
     const laterYearTax = calcFederalIncomeTax(80000, 20000, 10, 0.03).totalTax;
     expect(laterYearTax).toBeLessThan(currentYearTax);
+  });
+});
+
+describe('net investment income tax', () => {
+  it('returns zero below the threshold', () => {
+    expect(calcNetInvestmentIncomeTax(150000, 10000).tax).toBe(0);
+  });
+
+  it('uses the lower of excess MAGI and net investment income', () => {
+    expect(calcNetInvestmentIncomeTax(220000, 10000).tax).toBeCloseTo(380, 6);
+    expect(calcNetInvestmentIncomeTax(300000, 10000).tax).toBeCloseTo(380, 6);
+  });
+
+  it('uses a higher threshold for married filers', () => {
+    expect(getNetInvestmentIncomeTaxThreshold('married')).toBeGreaterThan(getNetInvestmentIncomeTaxThreshold('single'));
+  });
+});
+
+describe('foreign tax credit estimate', () => {
+  it('limits the allowable credit to the FTC limitation', () => {
+    const result = estimateForeignTaxCredit(1200, 10000, 60000, 6000);
+    expect(result.limitation).toBeCloseTo(1000, 6);
+    expect(result.allowableCredit).toBeCloseTo(1000, 6);
+    expect(result.disallowedCredit).toBeCloseTo(200, 6);
   });
 });
 
