@@ -38,7 +38,7 @@ export function renderInvestmentIncome(): void {
     );
     $('yieldFreshness').style.color = days > 7 ? 'var(--red)' : days > 1 ? 'var(--orange)' : 'var(--accent)';
   } else {
-    $('yieldFreshness').textContent = 'Using estimates \u2014 click Fetch Live Data';
+    $('yieldFreshness').textContent = 'Using estimates \u2014 refresh from Symbols';
     $('yieldFreshness').style.color = 'var(--muted)';
   }
 

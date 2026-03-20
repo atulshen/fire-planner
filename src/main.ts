@@ -48,6 +48,18 @@ import { guessAccountType, guessCategory } from './calc/category';
 import { calculateFirePlan } from './calc/fire';
 import { renderPlannerPage } from './render/planner';
 import { estimateAccountReturn, estimateAccountYield } from './calc/account-assumptions';
+import {
+  buildDealchartsQueries,
+  emptySymbolLookupResult,
+  hasSymbolLookupData,
+  inferCategoryFromTickerAndName,
+  isLikelyFundTicker,
+  mergeSymbolLookupResults,
+  parseEodhdEodPrice,
+  parseDealchartsFundFacts,
+  parseStockAnalysisOverview,
+  pickDealchartsSearchResult,
+} from './calc/symbol-data';
 
 type AppPage = 'planner' | 'portfolio' | 'brokerages' | 'symbols' | 'drawdown' | 'conversion' | 'healthcare';
 
@@ -282,9 +294,6 @@ const APP_HTML = `
         <button class="btn" onclick="openCostBasisModal()">Import Cost Basis</button>
         <button class="btn primary" onclick="openAddModal()">+ Add Holding</button>
         <button class="btn" onclick="openTargetModal()">Set Targets</button>
-        <button class="btn" id="fetchDataBtn" onclick="handleFetchAllData()" style="white-space:nowrap;">
-          <span id="fetchDataLabel">Fetch Live Data</span>
-        </button>
       </div>
     </div>
 
@@ -321,7 +330,7 @@ const APP_HTML = `
       </div>
       <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;">
         Estimated annual dividends and interest by account type. The key planning number is <strong>MAGI-Relevant Investment Income</strong>, which includes taxable account income plus muni income.
-        IRA, Roth, and HSA sections are shown for context only. Click <strong>Fetch Live Data</strong> above to refresh yields and prices.
+        IRA, Roth, and HSA sections are shown for context only. Refresh symbol metadata from the <strong>Symbols</strong> tab when you want updated yields and prices.
       </p>
       <div id="investmentIncomeArea"></div>
     </div>
@@ -353,6 +362,33 @@ const APP_HTML = `
       <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1rem;">
         Persisted symbol metadata, inferred asset classes, and any stored multi-asset allocation splits.
       </p>
+      <div class="planner-optional-box" style="margin-bottom:1rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.75rem;flex-wrap:wrap;margin-bottom:0.75rem;">
+          <div>
+            <div style="font-size:0.75rem;text-transform:uppercase;font-weight:700;letter-spacing:0.06em;color:var(--muted);">Data Source</div>
+            <div style="font-size:0.92rem;">EODHD API</div>
+          </div>
+          <a href="https://eodhd.com/pricing" target="_blank" rel="noreferrer noopener" style="font-size:0.82rem;color:var(--blue);text-decoration:none;">Get API key</a>
+        </div>
+        <div class="grid-2" style="align-items:end;margin-bottom:0.5rem;">
+          <label style="display:flex;flex-direction:column;gap:0.35rem;font-size:0.8rem;color:var(--muted);">
+            <span>EODHD API Key</span>
+            <input id="symbolApiKey" class="input" type="password" placeholder="Stored locally in this browser" autocomplete="off" />
+          </label>
+          <div style="display:flex;gap:0.5rem;justify-content:flex-end;align-items:end;">
+            <button class="btn" onclick="clearSymbolApiSettings()">Clear</button>
+            <button class="btn primary" onclick="saveSymbolApiSettings()">Save API Key</button>
+          </div>
+        </div>
+        <div style="font-size:0.78rem;color:var(--muted);" id="symbolApiStatus">
+          With a key, refresh will prefer EODHD end-of-day prices, then use the public fallback sources for name, yield, expense ratio, and classification.
+        </div>
+        <div style="font-size:0.78rem;color:var(--muted);margin-top:0.5rem;line-height:1.5;">
+          1. Create an EODHD account and copy your API token from the dashboard.<br>
+          2. Paste it here and click <strong>Save API Key</strong>. The key stays in this browser only.<br>
+          3. Free EODHD access is useful for end-of-day prices. Yield and expense ratio still rely on the public fallback sources unless you add a richer fund-data provider later.
+        </div>
+      </div>
       <div id="symbolRefreshReportArea" style="margin-bottom:1rem;"></div>
       <div id="symbolCatalogArea"></div>
     </div>
@@ -753,6 +789,10 @@ type CostBasisAggregate = {
 
 const win = window as any;
 const SA_API = 'https://api.stockanalysis.com/api/symbol';
+const DEALCHARTS_SEARCH_API = 'https://dealcharts.org/.netlify/functions/search';
+const EODHD_API = 'https://eodhd.com/api';
+const SYMBOL_API_KEY_STORAGE_KEY = 'fire_eodhd_api_key';
+const SYMBOL_REFRESH_REPORT_STORAGE_KEY = 'fire_symbol_refresh_report';
 
 let csvHeaders: string[] = [];
 let csvRows: CsvRow[] = [];
@@ -786,15 +826,64 @@ let currentImportBrokerage: string | null = null;
 let tickerFetchTimer: number | null = null;
 let plannerRetireExpensesCustom = false;
 let lastAutoHouseholdSs = 20000;
-let lastRefreshReport: {
+let symbolApiKey = localStorage.getItem(SYMBOL_API_KEY_STORAGE_KEY) || '';
+type SymbolRefreshSuccess = {
+  ticker: string;
+  fields: string[];
+  sources: string[];
+};
+type SymbolRefreshFailure = {
+  ticker: string;
+  apiCalls: string[];
+  missingFields: string[];
+};
+type SymbolRefreshReport = {
   startedAt: number;
   completedAt: number;
   total: number;
   updated: number;
   failed: number;
-  successes: Array<{ ticker: string; fields: string[] }>;
-  failures: Array<{ ticker: string; error: string }>;
-} | null = null;
+  successes: SymbolRefreshSuccess[];
+  failures: SymbolRefreshFailure[];
+};
+
+function normalizeStoredRefreshReport(raw: string): SymbolRefreshReport | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      startedAt: Number(parsed.startedAt) || Date.now(),
+      completedAt: Number(parsed.completedAt) || Date.now(),
+      total: Number(parsed.total) || 0,
+      updated: Number(parsed.updated) || 0,
+      failed: Number(parsed.failed) || 0,
+      successes: Array.isArray(parsed.successes)
+        ? parsed.successes.map((item: any) => ({
+            ticker: String(item.ticker || ''),
+            fields: Array.isArray(item.fields) ? item.fields.map(String) : [],
+            sources: Array.isArray(item.sources) ? item.sources.map(String) : [],
+          }))
+        : [],
+      failures: Array.isArray(parsed.failures)
+        ? parsed.failures.map((item: any) => ({
+            ticker: String(item.ticker || ''),
+            apiCalls: Array.isArray(item.apiCalls)
+              ? item.apiCalls.map(String)
+              : item.error ? [String(item.error)] : [],
+            missingFields: Array.isArray(item.missingFields) ? item.missingFields.map(String) : [],
+          }))
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+let lastRefreshReport: SymbolRefreshReport | null = (() => {
+  const raw = localStorage.getItem(SYMBOL_REFRESH_REPORT_STORAGE_KEY);
+  if (!raw) return null;
+  return normalizeStoredRefreshReport(raw);
+})();
 
 function syncGlobalRefs(): void {
   win.acctMap = acctMap;
@@ -884,12 +973,14 @@ function attachGlobals(): void {
     openTargetModal,
     closeTargetModal,
     saveTargets,
-    handleFetchAllData,
     handleSymbolCatalogRefresh,
     setBrokerageFilter,
     startSymbolEdit,
     cancelSymbolEdit,
     saveSymbolEdit,
+    saveSymbolApiSettings,
+    clearSymbolApiSettings,
+    clearSymbolRefreshReport,
   });
 }
 
@@ -1030,6 +1121,14 @@ function renderBrokerages(): void {
 }
 
 function renderSymbols(): void {
+  const apiKeyInput = document.getElementById('symbolApiKey') as HTMLInputElement | null;
+  if (apiKeyInput) apiKeyInput.value = symbolApiKey;
+  const apiStatus = document.getElementById('symbolApiStatus');
+  if (apiStatus) {
+    apiStatus.textContent = symbolApiKey
+      ? 'API key saved locally. Refreshes will prefer EODHD end-of-day prices before using the public fallback sources for the remaining fields.'
+      : 'Add an EODHD API key if you want end-of-day price refreshes for mutual funds. Without a key, refresh uses the public fallback sources only.';
+  }
   renderSymbolCatalogPage({ editingTicker: editingSymbolTicker });
   renderSymbolRefreshReport();
 }
@@ -1059,11 +1158,13 @@ function renderSymbolRefreshReport(): void {
         <div>
           <div style="font-size:0.75rem;text-transform:uppercase;font-weight:600;color:var(--muted);letter-spacing:0.04em;margin-bottom:0.2rem;">Last Refresh</div>
           <div style="font-size:0.9rem;">${completed}</div>
+          <div style="font-size:0.75rem;color:var(--muted);margin-top:0.2rem;">This report stays in this browser until you clear it.</div>
         </div>
-        <div style="display:flex;gap:1rem;flex-wrap:wrap;font-size:0.85rem;">
+        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;font-size:0.85rem;align-items:center;">
           <span><strong>${lastRefreshReport.updated}</strong> populated</span>
-          <span><strong>${lastRefreshReport.failed}</strong> failed</span>
+          <span><strong>${lastRefreshReport.failed}</strong> with issues</span>
           <span><strong>${lastRefreshReport.total}</strong> total</span>
+          <button class="btn" style="padding:0.3rem 0.55rem;font-size:0.75rem;" onclick="clearSymbolRefreshReport()">Clear Report</button>
         </div>
       </div>
       <div class="grid-2" style="margin-bottom:0;">
@@ -1074,23 +1175,39 @@ function renderSymbolRefreshReport(): void {
                 <div style="padding:0.35rem 0;border-bottom:1px solid var(--border);">
                   <strong>${item.ticker}</strong>
                   <div style="color:var(--muted);">${item.fields.join(', ')}</div>
+                  <div style="color:var(--muted);font-size:0.76rem;">Source: ${item.sources.length > 0 ? item.sources.join(' + ') : 'Unknown'}</div>
                 </div>
               `).join('')}</div>`
             : '<div style="font-size:0.82rem;color:var(--muted);">No symbols populated.</div>'}
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.9rem;">
-          <div style="font-size:0.75rem;text-transform:uppercase;font-weight:600;color:var(--muted);letter-spacing:0.04em;margin-bottom:0.5rem;">Errors</div>
+          <div style="font-size:0.75rem;text-transform:uppercase;font-weight:600;color:var(--muted);letter-spacing:0.04em;margin-bottom:0.5rem;">Issues</div>
           ${lastRefreshReport.failures.length > 0
             ? `<div style="max-height:220px;overflow:auto;font-size:0.82rem;">${lastRefreshReport.failures.map((item) => `
                 <div style="padding:0.35rem 0;border-bottom:1px solid var(--border);">
                   <strong style="color:var(--red);">${item.ticker}</strong>
-                  <div style="color:var(--muted);">${item.error}</div>
+                  <div style="color:var(--muted);font-size:0.76rem;">API calls: ${item.apiCalls.length > 0 ? item.apiCalls.join(' | ') : 'None'}</div>
+                  <div style="color:var(--muted);font-size:0.76rem;">Missing fields: ${item.missingFields.length > 0 ? item.missingFields.join(', ') : 'None'}</div>
                 </div>
               `).join('')}</div>`
-            : '<div style="font-size:0.82rem;color:var(--accent);">No symbol refresh errors.</div>'}
+            : '<div style="font-size:0.82rem;color:var(--accent);">No symbol refresh issues.</div>'}
         </div>
       </div>
     </div>`;
+}
+
+function persistSymbolRefreshReport(): void {
+  if (!lastRefreshReport) {
+    localStorage.removeItem(SYMBOL_REFRESH_REPORT_STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(SYMBOL_REFRESH_REPORT_STORAGE_KEY, JSON.stringify(lastRefreshReport));
+}
+
+function clearSymbolRefreshReport(): void {
+  lastRefreshReport = null;
+  persistSymbolRefreshReport();
+  renderSymbolRefreshReport();
 }
 
 function getHoldingBalances(): {
@@ -2498,49 +2615,151 @@ function renderDrawdownPlan(): void {
   renderLifetimePlan('dp', false);
 }
 
-async function fetchTickerData(ticker: string): Promise<{
-  yield: number;
-  price: number | null;
-  name: string | null;
-  allocation: Record<string, number> | null;
-  assetClass?: string | null;
-  etfCategory?: string | null;
-  detectedCategory?: CategoryKey | null;
-  expenseRatio?: number | null;
-} | null> {
-  const parsePercent = (value: unknown): number | null => {
-    if (value == null) return null;
-    const match = String(value).match(/([\d.]+)/);
-    return match ? parseFloat(match[1]) : null;
-  };
+function getLocalTickerDefaults(ticker: string): Partial<YieldCacheEntry> & { category?: CategoryKey } {
   const t = ticker.toUpperCase();
-  if (CASH_TICKERS.has(t)) return { yield: 4.5, price: 1, name: t, allocation: null };
-  const errors: string[] = [];
+  const cached = yieldCache[t];
+  if (cached) return cached;
+  const holding = holdings.find((item) => item.ticker.toUpperCase() === t);
+  if (!holding) return {};
+  return {
+    yield: holding.dividendYield,
+    price: holding.price,
+    name: holding.name,
+    category: holding.category,
+  };
+}
+
+function mergeFetchedTickerData(ticker: string, data: ReturnType<typeof emptySymbolLookupResult>): YieldCacheEntry {
+  const t = ticker.toUpperCase();
+  const existing = yieldCache[t];
+  const localDefaults = getLocalTickerDefaults(t);
+  return {
+    yield: data.yield ?? existing?.yield ?? localDefaults?.yield ?? 0,
+    price: data.price ?? existing?.price ?? localDefaults?.price ?? 0,
+    name: data.name || existing?.name || localDefaults?.name || t,
+    allocation: data.allocation || existing?.allocation || localDefaults?.allocation || COMPOSITE_FUNDS[t] || null,
+    assetClass: data.assetClass || existing?.assetClass,
+    etfCategory: data.etfCategory || existing?.etfCategory,
+    detectedCategory: data.detectedCategory || existing?.detectedCategory || localDefaults.category,
+    expenseRatio: data.expenseRatio ?? existing?.expenseRatio,
+    dataSource: data.sources?.length ? data.sources.join(' + ') : existing?.dataSource,
+    fetched: Date.now(),
+  };
+}
+
+function getExpectedRefreshFields(ticker: string, name?: string | null): string[] {
+  const expected = ['name', 'price', 'yield'];
+  if (isLikelyFundTicker(ticker, name || null)) {
+    expected.push('expense ratio');
+    expected.push('classification');
+  }
+  return expected;
+}
+
+function getPresentRefreshFields(data: ReturnType<typeof emptySymbolLookupResult>): string[] {
+  const present: string[] = [];
+  if (data.name) present.push('name');
+  if (data.price != null && data.price > 0) present.push('price');
+  if (data.yield != null) present.push('yield');
+  if (data.expenseRatio != null) present.push('expense ratio');
+  if (data.allocation || data.assetClass || data.detectedCategory) present.push('classification');
+  return present;
+}
+
+async function formatHttpFailure(resp: Response, label: string): Promise<string> {
+  let detail = '';
+  try {
+    const text = (await resp.text()).trim();
+    if (text) {
+      const compact = text.replace(/\s+/g, ' ').slice(0, 180);
+      detail = `: ${compact}`;
+    }
+  } catch {
+    detail = '';
+  }
+  return `${label} (HTTP ${resp.status})${detail}`;
+}
+
+function formatIsoDate(daysAgo: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() - daysAgo);
+  return date.toISOString().slice(0, 10);
+}
+
+async function fetchTickerData(
+  ticker: string,
+): Promise<{
+  data: ReturnType<typeof emptySymbolLookupResult> | null;
+  apiCalls: string[];
+  missingFields: string[];
+}> {
+  const t = ticker.toUpperCase();
+  if (CASH_TICKERS.has(t)) {
+    const data = {
+      yield: 4.5,
+      price: 1,
+      name: t,
+      allocation: null,
+      assetClass: null,
+      etfCategory: null,
+      detectedCategory: null,
+      expenseRatio: null,
+      sources: ['Built-in cash defaults'],
+    };
+    return { data, apiCalls: [], missingFields: [] };
+  }
+
+  const localDefaults = getLocalTickerDefaults(t);
+  const likelyFund = isLikelyFundTicker(t, localDefaults.name || null);
+  let merged = mergeSymbolLookupResults(emptySymbolLookupResult(), {
+    yield: null,
+    price: null,
+    name: localDefaults?.name || null,
+    allocation: COMPOSITE_FUNDS[t] || null,
+    assetClass: null,
+    etfCategory: null,
+    detectedCategory: localDefaults.category || null,
+    expenseRatio: localDefaults.expenseRatio ?? null,
+  });
+  const apiCalls: string[] = [];
+
+  if (symbolApiKey) {
+    try {
+      const eodResp = await fetch(
+        `${EODHD_API}/eod/${encodeURIComponent(`${t}.US`)}?api_token=${encodeURIComponent(symbolApiKey)}&fmt=json&from=${formatIsoDate(14)}`,
+      );
+      if (!eodResp.ok) {
+        apiCalls.push(await formatHttpFailure(
+          eodResp,
+          eodResp.status === 402 || eodResp.status === 403 || eodResp.status === 429
+            ? 'EODHD end-of-day price blocked by plan/quota'
+            : 'EODHD end-of-day price',
+        ));
+      } else {
+        const eodJson = await eodResp.json();
+        merged = mergeSymbolLookupResults(merged, parseEodhdEodPrice(eodJson));
+      }
+    } catch (error) {
+      apiCalls.push(`EODHD end-of-day price error: ${(error as Error).message}`);
+    }
+  }
 
   for (const type of ['e', 's']) {
     try {
       const resp = await fetch(`${SA_API}/${type}/${t}/overview`);
       if (!resp.ok) {
-        errors.push(`${type}/overview returned HTTP ${resp.status}`);
+        apiCalls.push(await formatHttpFailure(resp, `Stock Analysis ${type}/overview`));
         continue;
       }
       const json = await resp.json();
       const d = json.data;
       if (!d) {
-        errors.push(`${type}/overview returned no data`);
+        apiCalls.push(`Stock Analysis ${type}/overview returned no data`);
         continue;
       }
 
-      let yld: number | null = null;
-      if (d.dividendYield) yld = parseFloat(d.dividendYield);
-      else if (d.dividend) {
-        const match = String(d.dividend).match(/([\d.]+)%/);
-        if (match) yld = parseFloat(match[1]);
-      }
-
-      let price: number | null = null;
-      if (d.nav) price = parseFloat(String(d.nav).replace(/[$,]/g, ''));
-      else if (d.price) price = parseFloat(String(d.price).replace(/[$,]/g, ''));
+      const parsed = parseStockAnalysisOverview(t, d);
+      let price = parsed?.price ?? null;
 
       if (price === null && type === 's') {
         try {
@@ -2551,92 +2770,78 @@ async function fetchTickerData(ticker: string): Promise<{
               price = historyJson.data[0].c;
             }
           } else {
-            errors.push(`${type}/history returned HTTP ${historyResp.status}`);
+            apiCalls.push(await formatHttpFailure(historyResp, `Stock Analysis ${type}/history`));
           }
         } catch (error) {
-          errors.push(`${type}/history error: ${(error as Error).message}`);
+          apiCalls.push(`Stock Analysis ${type}/history error: ${(error as Error).message}`);
         }
       }
-
-      let name: string | null = null;
-      if (d.name) name = d.name;
-      else if (d.description) {
-        const firstSentence = String(d.description).split(/\.\s/)[0];
-        const nameMatch = firstSentence.match(/^(.+?)(?:\s+is\s|\s+designs\s|\s+provides\s|\s+develops\s|\s+operates\s|\s+manufactures\s)/i);
-        name = nameMatch ? nameMatch[1] : firstSentence.substring(0, 50);
-      }
-
-      let assetClass: string | null = null;
-      let etfCategory: string | null = null;
-      let expenseRatio: number | null = parsePercent((d as any).expenseRatio ?? (d as any).expense_ratio ?? (d as any).netExpenseRatio ?? (d as any).net_expense_ratio);
-      const infoTable = d.infoTable;
-      if (Array.isArray(infoTable)) {
-        for (const item of infoTable) {
-          if (Array.isArray(item)) {
-            const label = String(item[0] || '');
-            const normalizedLabel = label.toLowerCase();
-            if (label === 'Asset Class') assetClass = item[1];
-            if (label === 'Category') etfCategory = item[1];
-            if (item[1] && normalizedLabel.includes('expense') && normalizedLabel.includes('ratio')) {
-              expenseRatio = parsePercent(item[1]) ?? expenseRatio;
-            }
-          }
-        }
-      }
-
-      let allocation: Record<string, number> | null = COMPOSITE_FUNDS[t] || null;
-      if (!allocation && assetClass === 'Asset Allocation' && etfCategory) {
-        const cat = etfCategory.toLowerCase();
-        if (cat.includes('aggressive') || cat.includes('85') || cat.includes('80')) allocation = { us_stock: 0.48, intl_stock: 0.32, bond: 0.16, cash: 0.04 };
-        else if (cat.includes('growth') || cat.includes('60')) allocation = { us_stock: 0.36, intl_stock: 0.24, bond: 0.32, cash: 0.08 };
-        else if (cat.includes('moderate') || cat.includes('50') || cat.includes('balanced')) allocation = { us_stock: 0.30, intl_stock: 0.20, bond: 0.35, cash: 0.15 };
-        else if (cat.includes('conservative') || cat.includes('30') || cat.includes('40')) allocation = { us_stock: 0.24, intl_stock: 0.16, bond: 0.42, cash: 0.18 };
-        else if (cat.includes('income') || cat.includes('20')) allocation = { us_stock: 0.12, intl_stock: 0.08, bond: 0.56, cash: 0.24 };
-      }
-
-      let detectedCategory: CategoryKey | null = null;
-      if (assetClass === 'Fixed Income') detectedCategory = 'bond';
-      else if (assetClass === 'Equity') {
-        detectedCategory = etfCategory && /international|foreign|emerging|global/i.test(etfCategory)
-          ? 'intl_stock'
-          : 'us_stock';
-      } else if (assetClass === 'Real Estate') {
-        detectedCategory = 'reit';
-      }
-
-      return {
-        yield: yld ?? 0,
-        price,
-        name,
-        allocation,
-        assetClass,
-        etfCategory,
-        detectedCategory,
-        expenseRatio,
-      };
+      merged = mergeSymbolLookupResults(merged, parsed, { ...parsed, price, sources: price != null && parsed?.price == null ? ['Stock Analysis history'] : parsed?.sources || [] });
     } catch (error) {
-      errors.push(`${type}/overview error: ${(error as Error).message}`);
+      apiCalls.push(`Stock Analysis ${type}/overview error: ${(error as Error).message}`);
       continue;
     }
   }
 
-  throw new Error(errors.join('; ') || 'No symbol data returned');
+  if (!merged.allocation && isLikelyFundTicker(t, merged.name || localDefaults?.name || null)) {
+    const queries = buildDealchartsQueries(t, merged.name || localDefaults?.name || null);
+    for (const query of queries) {
+      try {
+        const searchResp = await fetch(`${DEALCHARTS_SEARCH_API}?query=${encodeURIComponent(query)}`);
+        if (!searchResp.ok) {
+          apiCalls.push(await formatHttpFailure(searchResp, `Dealcharts search "${query}"`));
+          continue;
+        }
+        const searchJson = await searchResp.json();
+        const result = pickDealchartsSearchResult(Array.isArray(searchJson) ? searchJson : [], t, merged.name || localDefaults?.name || null);
+        if (!result?.facts_url) continue;
+
+        const factsResp = await fetch(result.facts_url);
+        if (!factsResp.ok) {
+          apiCalls.push(await formatHttpFailure(factsResp, `Dealcharts facts "${query}"`));
+          continue;
+        }
+        const factsJson = await factsResp.json();
+        merged = mergeSymbolLookupResults(merged, parseDealchartsFundFacts(t, factsJson));
+        if (merged.allocation || merged.name) break;
+      } catch (error) {
+        apiCalls.push(`Dealcharts lookup "${query}" error: ${(error as Error).message}`);
+      }
+    }
+  }
+
+  if (symbolApiKey && likelyFund && (merged.expenseRatio == null || merged.yield == null)) {
+    apiCalls.push('EODHD free-key flow only requested end-of-day price; yield and expense ratio still depend on the public fallback sources');
+  }
+
+  if (!merged.detectedCategory) {
+    const inferredCategory = inferCategoryFromTickerAndName(t, merged.name || localDefaults.name || null);
+    if (inferredCategory) {
+      merged = mergeSymbolLookupResults(merged, {
+        yield: null,
+        price: null,
+        name: null,
+        allocation: null,
+        assetClass: null,
+        etfCategory: null,
+        detectedCategory: inferredCategory,
+        expenseRatio: null,
+        sources: ['Name-based classification fallback'],
+      });
+    }
+  }
+
+  const missingFields = getExpectedRefreshFields(t, merged.name || localDefaults.name || null)
+    .filter((field) => !getPresentRefreshFields(merged).includes(field));
+
+  if (hasSymbolLookupData(merged)) return { data: merged, apiCalls, missingFields };
+  return { data: null, apiCalls, missingFields };
 }
 
 async function fetchSingleYield(ticker: string) {
-  const data = await fetchTickerData(ticker);
+  const { data } = await fetchTickerData(ticker);
   if (data) {
-    yieldCache[ticker.toUpperCase()] = {
-      yield: data.yield,
-      price: data.price || 0,
-      name: data.name || ticker.toUpperCase(),
-      allocation: data.allocation || null,
-      assetClass: data.assetClass || undefined,
-      etfCategory: data.etfCategory || undefined,
-      detectedCategory: data.detectedCategory || undefined,
-      expenseRatio: data.expenseRatio || undefined,
-      fetched: Date.now(),
-    };
+    yieldCache[ticker.toUpperCase()] = mergeFetchedTickerData(ticker, data);
     persistYieldCache();
   }
   return data;
@@ -2646,22 +2851,23 @@ async function fetchAllYields(statusEl?: HTMLElement | null): Promise<{
   total: number;
   updated: number;
   failed: number;
-  successes: Array<{ ticker: string; fields: string[] }>;
-  failures: Array<{ ticker: string; error: string }>;
+  successes: SymbolRefreshSuccess[];
+  failures: SymbolRefreshFailure[];
 }> {
   const tickers = [...new Set(holdings.map((h) => h.ticker.toUpperCase()))];
   let done = 0;
   let updated = 0;
   let failed = 0;
-  const successes: Array<{ ticker: string; fields: string[] }> = [];
-  const failures: Array<{ ticker: string; error: string }> = [];
+  const successes: SymbolRefreshSuccess[] = [];
+  const failures: SymbolRefreshFailure[] = [];
 
   for (const ticker of tickers) {
     if (statusEl) statusEl.textContent = `Fetching ${ticker}... (${done}/${tickers.length})`;
 
-    try {
-      const data = await fetchTickerData(ticker);
-      if (data) {
+    const result = await fetchTickerData(ticker);
+    const apiCalls = result.apiCalls;
+    const data = result.data;
+    if (data) {
         const fields: string[] = [];
         if (data.yield != null) fields.push('yield');
         if (data.price != null && data.price > 0) fields.push('price');
@@ -2670,35 +2876,32 @@ async function fetchAllYields(statusEl?: HTMLElement | null): Promise<{
         if (data.detectedCategory) fields.push('category');
         if (data.allocation) fields.push('allocation split');
         if (data.expenseRatio != null) fields.push('expense ratio');
-        yieldCache[ticker] = {
-          yield: data.yield,
-          price: data.price || 0,
-          name: data.name || ticker,
-          allocation: data.allocation || null,
-          assetClass: data.assetClass || undefined,
-          etfCategory: data.etfCategory || undefined,
-          detectedCategory: data.detectedCategory || undefined,
-          expenseRatio: data.expenseRatio || undefined,
-          fetched: Date.now(),
-        };
+        yieldCache[ticker] = mergeFetchedTickerData(ticker, data);
 
         for (const h of holdings) {
           if (h.ticker.toUpperCase() === ticker) {
-            h.dividendYield = data.yield;
+            if (data.yield != null) h.dividendYield = data.yield;
             if (data.price && data.price > 0) h.price = Math.round(data.price * 100) / 100;
             if (data.name && data.name.length > 2 && h.name === h.ticker) h.name = data.name;
             if (data.detectedCategory && !data.allocation) h.category = data.detectedCategory;
           }
         }
         updated++;
-        successes.push({ ticker, fields: fields.length > 0 ? fields : ['no new fields detected'] });
-      } else {
-        failed++;
-        failures.push({ ticker, error: 'No data returned from the symbol data source.' });
-      }
-    } catch (error) {
+        successes.push({
+          ticker,
+          fields: fields.length > 0 ? fields : ['no new fields detected'],
+          sources: data.sources || [],
+        });
+    }
+
+    const hasIssues = !data || apiCalls.length > 0 || result.missingFields.length > 0;
+    if (hasIssues) {
       failed++;
-      failures.push({ ticker, error: (error as Error).message || 'Unknown refresh error' });
+      failures.push({
+        ticker,
+        apiCalls: apiCalls.length > 0 ? apiCalls : ['No symbol data returned'],
+        missingFields: result.missingFields,
+      });
     }
 
     done++;
@@ -2730,6 +2933,7 @@ async function runDataRefresh(buttonId: string, labelId: string, idleLabel: stri
       completedAt: Date.now(),
       ...result,
     };
+    persistSymbolRefreshReport();
     renderSymbolRefreshReport();
     label.textContent = idleLabel;
     showImportToast(`${result.updated} populated${result.failed > 0 ? `, ${result.failed} failed` : ''} — symbol data refreshed`);
@@ -2741,8 +2945,9 @@ async function runDataRefresh(buttonId: string, labelId: string, idleLabel: stri
       updated: 0,
       failed: 1,
       successes: [],
-      failures: [{ ticker: 'ALL', error: (error as Error).message }],
+      failures: [{ ticker: 'ALL', apiCalls: [(error as Error).message], missingFields: [] }],
     };
+    persistSymbolRefreshReport();
     renderSymbolRefreshReport();
     label.textContent = idleLabel;
     showImportToast(`Fetch failed: ${(error as Error).message}`);
@@ -2750,6 +2955,21 @@ async function runDataRefresh(buttonId: string, labelId: string, idleLabel: stri
     btn.disabled = false;
     btn.style.opacity = '';
   }
+}
+
+function saveSymbolApiSettings(): void {
+  const input = $('symbolApiKey') as HTMLInputElement;
+  symbolApiKey = input.value.trim();
+  localStorage.setItem(SYMBOL_API_KEY_STORAGE_KEY, symbolApiKey);
+  renderSymbols();
+  showImportToast(symbolApiKey ? 'Saved EODHD API key locally' : 'Removed EODHD API key');
+}
+
+function clearSymbolApiSettings(): void {
+  symbolApiKey = '';
+  localStorage.removeItem(SYMBOL_API_KEY_STORAGE_KEY);
+  renderSymbols();
+  showImportToast('Cleared EODHD API key');
 }
 
 function parseSymbolAllocationInput(value: string): Record<string, number> | null {
@@ -2822,6 +3042,7 @@ function getSymbolCacheEntry(ticker: string): YieldCacheEntry {
     name: holding?.name || upper,
     allocation: null,
     detectedCategory: holding?.category,
+    dataSource: 'Manual',
     fetched: 0,
   };
   yieldCache[upper] = created;
@@ -2866,6 +3087,7 @@ function saveSymbolEdit(ticker: string): void {
     entry.allocation = allocation;
     entry.yield = parsedYield;
     entry.expenseRatio = parsedExpense ?? undefined;
+    entry.dataSource = 'Manual edit';
     yieldCache[upper] = entry;
 
     for (const holding of holdings) {
@@ -2883,10 +3105,6 @@ function saveSymbolEdit(ticker: string): void {
   } catch (error) {
     alert(`Failed to save symbol metadata: ${(error as Error).message}`);
   }
-}
-
-async function handleFetchAllData(): Promise<void> {
-  await runDataRefresh('fetchDataBtn', 'fetchDataLabel', 'Fetch Live Data');
 }
 
 async function handleSymbolCatalogRefresh(): Promise<void> {
@@ -3718,6 +3936,7 @@ function loadDemoPortfolio(event: Event): void {
   activeBrokerageFilter = 'all';
   editingSymbolTicker = null;
   lastRefreshReport = null;
+  persistSymbolRefreshReport();
   resetCsvState();
   cbParsedRows = [];
   const plannerDefaults: Record<(typeof plannerInputIds)[number], string> = {

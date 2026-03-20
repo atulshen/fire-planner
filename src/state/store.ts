@@ -85,6 +85,7 @@ function backfillYieldCacheFromHoldings(): void {
       etfCategory: existing?.etfCategory,
       detectedCategory: existing?.detectedCategory ?? holding.category,
       expenseRatio: existing?.expenseRatio,
+      dataSource: existing?.dataSource,
       fetched: existing?.fetched ?? 0,
     };
   }
@@ -154,6 +155,7 @@ export function createDemoYieldCache(): YieldCache {
       allocation: COMPOSITE_FUNDS[ticker] ?? null,
       detectedCategory: holding.category,
       expenseRatio: DEMO_EXPENSE_RATIOS[ticker],
+      dataSource: 'Demo seed',
       fetched: 0,
     };
   }
