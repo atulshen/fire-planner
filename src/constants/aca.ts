@@ -1,6 +1,7 @@
 import { PLANNING_BASE_YEAR } from './planning';
 
 export const ACA_FPL_BASELINE = 16050; // 2026 planning baseline, single person, 48 states
+export const ACA_FPL_ADDITIONAL_PERSON_BASELINE = 5650;
 
 // Applicable percentage table: [FPL%, contribution% of income]
 export const ACA_CONTRIBUTION_TABLE = [

@@ -1,4 +1,11 @@
-import { ACA_AGE_FACTORS, ACA_CONTRIBUTION_TABLE, ACA_FPL_BASELINE, GOLD_BASE_21, SILVER_BASE_21 } from '../constants/aca';
+import {
+  ACA_AGE_FACTORS,
+  ACA_CONTRIBUTION_TABLE,
+  ACA_FPL_ADDITIONAL_PERSON_BASELINE,
+  ACA_FPL_BASELINE,
+  GOLD_BASE_21,
+  SILVER_BASE_21,
+} from '../constants/aca';
 import { PLANNING_GROWTH_RATES, scalePlanningAmount } from '../constants/planning';
 import { fmt } from '../utils/format';
 
@@ -62,11 +69,25 @@ export function getAcaFpl(
   return scalePlanningAmount(ACA_FPL_BASELINE, yearsFromBase, inflationRate);
 }
 
-export function calcAcaSubsidyForFpl(magi: number, age: number, fpl: number): AcaSubsidyResult {
+export function getAcaHouseholdFpl(
+  householdSize = 1,
+  yearsFromBase = 0,
+  inflationRate = PLANNING_GROWTH_RATES.acaThresholds,
+): number {
+  const normalizedHouseholdSize = Math.max(Math.round(householdSize), 1);
+  const baseline = ACA_FPL_BASELINE + Math.max(normalizedHouseholdSize - 1, 0) * ACA_FPL_ADDITIONAL_PERSON_BASELINE;
+  return scalePlanningAmount(baseline, yearsFromBase, inflationRate);
+}
+
+export function calcAcaSubsidyForFpl(
+  magi: number,
+  age: number,
+  fpl: number,
+  monthlyBenchmark = estimateBenchmarkPremium(age),
+  monthlyGold = estimateGoldPremium(age),
+): AcaSubsidyResult {
   const fplRatio = magi / fpl;
-  const monthlyBenchmark = estimateBenchmarkPremium(age);
   const annualBenchmark = monthlyBenchmark * 12;
-  const monthlyGold = estimateGoldPremium(age);
   const annualGold = monthlyGold * 12;
 
   if (fplRatio < 1.0) {
@@ -117,20 +138,46 @@ export function calcAcaSubsidyForFpl(magi: number, age: number, fpl: number): Ac
   };
 }
 
-export function calcAcaSubsidyForYear(magi: number, age: number, yearsFromBase = 0, inflationRate = 0): AcaSubsidyResult {
-  return calcAcaSubsidyForFpl(magi, age, getAcaFpl(yearsFromBase, inflationRate));
+export function calcAcaSubsidyForYear(
+  magi: number,
+  age: number,
+  yearsFromBase = 0,
+  inflationRate = 0,
+  householdSize = 1,
+  monthlyBenchmark = estimateBenchmarkPremium(age),
+  monthlyGold = estimateGoldPremium(age),
+): AcaSubsidyResult {
+  return calcAcaSubsidyForFpl(
+    magi,
+    age,
+    getAcaHouseholdFpl(householdSize, yearsFromBase, inflationRate),
+    monthlyBenchmark,
+    monthlyGold,
+  );
 }
 
 /**
  * Calculate ACA subsidy for a given MAGI and age.
  */
-export function calcAcaSubsidy(magi: number, age: number): AcaSubsidyResult {
-  return calcAcaSubsidyForFpl(magi, age, ACA_FPL_BASELINE);
+export function calcAcaSubsidy(
+  magi: number,
+  age: number,
+  householdSize = 1,
+  monthlyBenchmark = estimateBenchmarkPremium(age),
+  monthlyGold = estimateGoldPremium(age),
+): AcaSubsidyResult {
+  return calcAcaSubsidyForFpl(
+    magi,
+    age,
+    getAcaHouseholdFpl(householdSize),
+    monthlyBenchmark,
+    monthlyGold,
+  );
 }
 
 /**
  * Get the ACA cliff amount (400% FPL).
  */
-export function getAcaCliff(yearsFromBase = 0, inflationRate = 0): number {
-  return getAcaFpl(yearsFromBase, inflationRate) * 4;
+export function getAcaCliff(yearsFromBase = 0, inflationRate = 0, householdSize = 1): number {
+  return getAcaHouseholdFpl(householdSize, yearsFromBase, inflationRate) * 4;
 }

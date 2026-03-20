@@ -1,10 +1,16 @@
-import { calcAcaSubsidyForYear, estimateGoldPremium } from './aca';
+import { calcAcaSubsidyForYear, estimateBenchmarkPremium, estimateGoldPremium } from './aca';
 import { calcPayrollTax, calcProgressiveTax } from './tax';
 import { getMedicareAnnualCost } from './medicare';
 import { PLANNING_GROWTH_RATES } from '../constants/planning';
+import type { FilingStatus } from '../types';
 
 export interface FirePlannerInputs {
   currentAge: number;
+  filingStatus?: FilingStatus;
+  householdSize?: number;
+  spouseAge?: number;
+  spouseAnnualIncome?: number;
+  spouseRetirementAge?: number;
   annualIncome: number;
   annualExpenses: number;
   currentSavings: number;
@@ -16,6 +22,8 @@ export interface FirePlannerInputs {
   longevityAge?: number;
   socialSecurityClaimAge?: number;
   socialSecurityBenefit?: number;
+  spouseSocialSecurityClaimAge?: number;
+  spouseSocialSecurityBenefit?: number;
 }
 
 export interface FirePlannerMilestone {
@@ -38,8 +46,12 @@ export interface FirePlannerResult {
   retireBaseExpenses: number;
   estimatedMedicalAtRetirement: number;
   estimatedMedicalAtSocialSecurity: number;
+  householdSocialSecurityStartAge: number | null;
   socialSecurityClaimAge: number;
   socialSecurityAnnualBenefit: number;
+  spouseSocialSecurityClaimAge: number | null;
+  spouseSocialSecurityAnnualBenefit: number;
+  householdSocialSecurityAnnualBenefit: number;
   bridgePortfolioNeedToday: number;
   bridgePortfolioNeedAtRetirement: number;
   netRetireExpensesAfterSocialSecurity: number;
@@ -67,7 +79,16 @@ const HEALTHCARE_INFLATION = PLANNING_GROWTH_RATES.healthcareCosts;
 
 export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult {
   const currentAge = clamp(inputs.currentAge || 0, 18, 100);
+  const filingStatus: FilingStatus = inputs.filingStatus === 'married' ? 'married' : 'single';
+  const spouseAge = filingStatus === 'married'
+    ? clamp(inputs.spouseAge ?? currentAge, 18, 100)
+    : currentAge;
+  const householdSize = Math.max(
+    Math.round(inputs.householdSize ?? (filingStatus === 'married' ? 2 : 1)),
+    filingStatus === 'married' ? 2 : 1,
+  );
   const annualIncome = Math.max(inputs.annualIncome || 0, 0);
+  const spouseAnnualIncome = filingStatus === 'married' ? Math.max(inputs.spouseAnnualIncome || 0, 0) : 0;
   const annualExpenses = Math.max(inputs.annualExpenses || 0, 0);
   const currentSavings = Math.max(inputs.currentSavings || 0, 0);
   const returnRate = Math.max(inputs.returnRate || 0, 0) / 100;
@@ -81,9 +102,25 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
   const longevityAge = clamp(inputs.longevityAge || 95, currentAge, MAX_PROJECTION_AGE);
   const socialSecurityClaimAge = inputs.socialSecurityClaimAge === 62 ? 62 : 67;
   const socialSecurityAnnualBenefit = Math.max(inputs.socialSecurityBenefit || 0, 0);
+  const spouseRetirementAge = filingStatus === 'married'
+    ? clamp(inputs.spouseRetirementAge ?? spouseAge, spouseAge, MAX_PROJECTION_AGE)
+    : MAX_PROJECTION_AGE;
+  const spouseSocialSecurityClaimAge = filingStatus === 'married'
+    ? (inputs.spouseSocialSecurityClaimAge === 62 ? 62 : 67)
+    : null;
+  const spouseSocialSecurityAnnualBenefit = filingStatus === 'married'
+    ? Math.max(inputs.spouseSocialSecurityBenefit || 0, 0)
+    : 0;
 
   const inflate = (amount: number, yearOffset: number) => amount * Math.pow(1 + inflationRate, Math.max(yearOffset, 0));
-  const grossIncomeForYear = (yearOffset: number) => inflate(annualIncome, yearOffset);
+  const grossIncomeForYear = (yearOffset: number) => {
+    const primaryIncome = inflate(annualIncome, yearOffset);
+    const spouseAgeForYear = spouseAge + yearOffset;
+    const spouseIncomeForYear = filingStatus === 'married' && spouseAgeForYear < spouseRetirementAge
+      ? inflate(spouseAnnualIncome, yearOffset)
+      : 0;
+    return primaryIncome + spouseIncomeForYear;
+  };
   const effectiveTaxRateForYear = (yearOffset: number) => {
     if (manualTaxRate !== null) return manualTaxRate;
     const grossIncome = grossIncomeForYear(yearOffset);
@@ -105,27 +142,57 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
   const maxYears = Math.max(longevityAge - currentAge, 0);
   const socialSecurityForYear = (yearOffset: number) => {
     const age = currentAge + yearOffset;
-    if (socialSecurityAnnualBenefit <= 0 || age < socialSecurityClaimAge) return 0;
-    return inflate(socialSecurityAnnualBenefit, yearOffset);
+    const primaryBenefit = socialSecurityAnnualBenefit > 0 && age >= socialSecurityClaimAge
+      ? inflate(socialSecurityAnnualBenefit, yearOffset)
+      : 0;
+    const spouseAgeForYear = spouseAge + yearOffset;
+    const spouseBenefit = spouseSocialSecurityAnnualBenefit > 0
+      && spouseSocialSecurityClaimAge !== null
+      && spouseAgeForYear >= spouseSocialSecurityClaimAge
+        ? inflate(spouseSocialSecurityAnnualBenefit, yearOffset)
+        : 0;
+    return primaryBenefit + spouseBenefit;
   };
   const medicalCostForYear = (yearOffset: number) => {
     const age = currentAge + yearOffset;
-    if (age < 65) {
+    const spouseAgeForYear = spouseAge + yearOffset;
+    const pre65Adults: number[] = [];
+    let medicareCost = 0;
+
+    if (age < 65) pre65Adults.push(age);
+    else medicareCost += getMedicareAnnualCost(age, 0, HEALTHCARE_INFLATION, age - 65).total;
+
+    if (filingStatus === 'married') {
+      if (spouseAgeForYear < 65) pre65Adults.push(spouseAgeForYear);
+      else medicareCost += getMedicareAnnualCost(spouseAgeForYear, 0, HEALTHCARE_INFLATION, spouseAgeForYear - 65).total;
+    }
+
+    if (pre65Adults.length > 0) {
       const inflationFactor = Math.pow(1 + HEALTHCARE_INFLATION, yearOffset);
-      let annualCost = estimateGoldPremium(age) * 12 * inflationFactor;
+      const monthlyGold = pre65Adults.reduce((sum, adultAge) => sum + estimateGoldPremium(adultAge), 0);
+      const monthlyBenchmark = pre65Adults.reduce((sum, adultAge) => sum + estimateBenchmarkPremium(adultAge), 0);
+      let annualCost = (monthlyGold * 12) * inflationFactor + medicareCost;
       const ss = socialSecurityForYear(yearOffset);
       const livingSpend = inflate(retireBaseExpenses, yearOffset);
       for (let i = 0; i < 4; i++) {
         const totalSpend = livingSpend + annualCost;
         const acaIncome = Math.max(totalSpend, ss);
-        const aca = calcAcaSubsidyForYear(acaIncome, age, yearOffset, inflationRate);
-        const updatedCost = aca.netPremium * inflationFactor;
+        const aca = calcAcaSubsidyForYear(
+          acaIncome,
+          pre65Adults[0],
+          yearOffset,
+          inflationRate,
+          householdSize,
+          monthlyBenchmark,
+          monthlyGold,
+        );
+        const updatedCost = aca.netPremium * inflationFactor + medicareCost;
         if (Math.abs(updatedCost - annualCost) < 1) return updatedCost;
         annualCost = updatedCost;
       }
       return annualCost;
     }
-    return getMedicareAnnualCost(age, 0, HEALTHCARE_INFLATION, age - 65).total;
+    return medicareCost;
   };
   const totalRetirementSpendForYear = (yearOffset: number) => inflate(retireBaseExpenses, yearOffset) + medicalCostForYear(yearOffset);
   const retirementWithdrawalForYear = (yearOffset: number) => {
@@ -202,10 +269,18 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
   const estimatedMedicalAtRetirement = medicalCostForYear(referenceYear);
   const bridgePortfolioNeedToday = retireBaseExpenses + medicalCostForYear(0);
   const bridgePortfolioNeedAtRetirement = totalRetirementSpendForYear(referenceYear);
-  const claimYearOffset = Math.max(socialSecurityClaimAge - currentAge, 0);
+  const socialSecurityStartOffsets = [
+    socialSecurityAnnualBenefit > 0 ? Math.max(socialSecurityClaimAge - currentAge, 0) : null,
+    spouseSocialSecurityAnnualBenefit > 0 && spouseSocialSecurityClaimAge !== null
+      ? Math.max(spouseSocialSecurityClaimAge - spouseAge, 0)
+      : null,
+  ].filter((offset): offset is number => offset !== null);
+  const claimYearOffset = socialSecurityStartOffsets.length > 0 ? Math.min(...socialSecurityStartOffsets) : Math.max(socialSecurityClaimAge - currentAge, 0);
+  const householdSocialSecurityStartAge = socialSecurityStartOffsets.length > 0 ? currentAge + claimYearOffset : null;
   const estimatedMedicalAtSocialSecurity = medicalCostForYear(claimYearOffset);
   const netRetireExpensesAfterSocialSecurity = Math.max(totalRetirementSpendForYear(claimYearOffset) - socialSecurityForYear(claimYearOffset), 0);
   const postSsPortfolioNeedAtClaim = netRetireExpensesAfterSocialSecurity;
+  const householdSocialSecurityAnnualBenefit = socialSecurityAnnualBenefit + spouseSocialSecurityAnnualBenefit;
   const contributionsAtRetire = contributions[referenceYear] ?? currentSavings;
   const growthAtRetire = growthAmounts[referenceYear] ?? 0;
   const totalAtRetire = Math.max(projectedNetWorth, 1);
@@ -228,8 +303,8 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
       }
     }
   }
-  if (socialSecurityAnnualBenefit > 0 && socialSecurityClaimAge >= currentAge && socialSecurityClaimAge <= years[years.length - 1]) {
-    milestones.push({ age: socialSecurityClaimAge, target: 'SS' });
+  if (householdSocialSecurityStartAge !== null && householdSocialSecurityStartAge >= currentAge && householdSocialSecurityStartAge <= years[years.length - 1]) {
+    milestones.push({ age: householdSocialSecurityStartAge, target: 'SS' });
   }
   if (fireAge !== null) milestones.push({ age: fireAge, target: 'FIRE' });
   milestones.sort((a, b) => a.age - b.age);
@@ -249,8 +324,12 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
     retireBaseExpenses,
     estimatedMedicalAtRetirement,
     estimatedMedicalAtSocialSecurity,
+    householdSocialSecurityStartAge,
     socialSecurityClaimAge,
     socialSecurityAnnualBenefit,
+    spouseSocialSecurityClaimAge,
+    spouseSocialSecurityAnnualBenefit,
+    householdSocialSecurityAnnualBenefit,
     bridgePortfolioNeedToday,
     bridgePortfolioNeedAtRetirement,
     netRetireExpensesAfterSocialSecurity,

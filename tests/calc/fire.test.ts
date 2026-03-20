@@ -234,6 +234,99 @@ describe('calculateFirePlan', () => {
     expect(longer.retirementFireNumber).toBeGreaterThan(shorter.retirementFireNumber);
   });
 
+  it('includes spouse Social Security in household retirement income', () => {
+    const withoutSpouseSs = calculateFirePlan({
+      currentAge: 45,
+      annualIncome: 130000,
+      annualExpenses: 50000,
+      currentSavings: 200000,
+      returnRate: 6,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      taxRate: 20,
+      retireExpenses: 45000,
+      longevityAge: 95,
+      filingStatus: 'married',
+      householdSize: 2,
+      spouseAge: 47,
+      spouseAnnualIncome: 70000,
+      spouseRetirementAge: 60,
+      socialSecurityClaimAge: 67,
+      socialSecurityBenefit: 24000,
+      spouseSocialSecurityClaimAge: 67,
+      spouseSocialSecurityBenefit: 0,
+    });
+
+    const withSpouseSs = calculateFirePlan({
+      currentAge: 45,
+      annualIncome: 130000,
+      annualExpenses: 50000,
+      currentSavings: 200000,
+      returnRate: 6,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      taxRate: 20,
+      retireExpenses: 45000,
+      longevityAge: 95,
+      filingStatus: 'married',
+      householdSize: 2,
+      spouseAge: 47,
+      spouseAnnualIncome: 70000,
+      spouseRetirementAge: 60,
+      socialSecurityClaimAge: 67,
+      socialSecurityBenefit: 24000,
+      spouseSocialSecurityClaimAge: 67,
+      spouseSocialSecurityBenefit: 18000,
+    });
+
+    expect(withSpouseSs.householdSocialSecurityAnnualBenefit).toBeGreaterThan(withoutSpouseSs.householdSocialSecurityAnnualBenefit);
+    expect(withSpouseSs.retirementFireNumber).toBeLessThan(withoutSpouseSs.retirementFireNumber);
+  });
+
+  it('reduces annual savings when spouse income stops before FIRE', () => {
+    const spouseKeepsWorking = calculateFirePlan({
+      currentAge: 35,
+      annualIncome: 100000,
+      annualExpenses: 60000,
+      currentSavings: 100000,
+      returnRate: 6,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      taxRate: 20,
+      retireExpenses: 50000,
+      longevityAge: 95,
+      filingStatus: 'married',
+      householdSize: 2,
+      spouseAge: 35,
+      spouseAnnualIncome: 50000,
+      spouseRetirementAge: 65,
+      socialSecurityBenefit: 0,
+      spouseSocialSecurityBenefit: 0,
+    });
+
+    const spouseRetiresEarly = calculateFirePlan({
+      currentAge: 35,
+      annualIncome: 100000,
+      annualExpenses: 60000,
+      currentSavings: 100000,
+      returnRate: 6,
+      inflationRate: 3,
+      withdrawalRate: 4,
+      taxRate: 20,
+      retireExpenses: 50000,
+      longevityAge: 95,
+      filingStatus: 'married',
+      householdSize: 2,
+      spouseAge: 35,
+      spouseAnnualIncome: 50000,
+      spouseRetirementAge: 45,
+      socialSecurityBenefit: 0,
+      spouseSocialSecurityBenefit: 0,
+    });
+
+    expect(spouseRetiresEarly.fireAge === null || spouseKeepsWorking.fireAge === null || spouseRetiresEarly.fireAge >= spouseKeepsWorking.fireAge).toBe(true);
+  });
+
   it('includes age-based healthcare estimates in retirement needs', () => {
     const age60 = calculateFirePlan({
       currentAge: 60,
