@@ -1,6 +1,6 @@
 import './styles.css';
 
-import type { AccountType, CategoryKey, Holding, YieldCache, YieldCacheEntry } from './types';
+import type { AccountType, CategoryKey, FilingStatus, Holding, YieldCache, YieldCacheEntry } from './types';
 import { $, esc } from './utils/dom';
 import { fmt, fmtD, fmtK, parseNum } from './utils/format';
 import { parseCsv } from './utils/csv';
@@ -39,7 +39,7 @@ import { renderSymbolCatalogPage } from './render/symbol-catalog';
 import { calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, estimateGoldPremium, getAcaCliff } from './calc/aca';
 import { calcFederalIncomeTax, calcPayrollTax, calcProgressiveTax, calcTaxableSocialSecurity, getTopOfOrdinaryBracketGrossIncome } from './calc/tax';
 import { getIrmaaSurcharge, getMedicareAnnualCost } from './calc/medicare';
-import { ACA_FPL_BASELINE, ACA_PLANNING_BASELINE_LABEL } from './constants/aca';
+import { ACA_FPL_ADDITIONAL_PERSON_BASELINE, ACA_FPL_BASELINE, ACA_PLANNING_BASELINE_LABEL } from './constants/aca';
 import { IRMAA_BRACKETS, MEDICARE_PLANNING_BASELINE_LABEL } from './constants/medicare';
 import { PLANNING_GROWTH_RATES } from './constants/planning';
 import { TAX_PLANNING_BASELINE_LABEL } from './constants/tax';
@@ -111,9 +111,40 @@ const APP_HTML = `
           <input type="number" id="currentAge" value="30" min="18" max="80">
         </div>
 
+        <div class="planner-row">
+          <div class="planner-field">
+            <label for="filingStatus">Filing Status</label>
+            <select id="filingStatus">
+              <option value="single" selected>Single</option>
+              <option value="married">Married Filing Jointly</option>
+            </select>
+          </div>
+          <div class="planner-field">
+            <label for="householdSize">Household Size</label>
+            <input type="number" id="householdSize" value="1" min="1" max="8">
+            <div class="planner-hint">Used for ACA / marketplace subsidy estimates</div>
+          </div>
+        </div>
+
         <div class="planner-field">
           <label for="annualIncome">Annual Income (pre-tax)</label>
           <input type="number" id="annualIncome" value="100000" step="1000">
+        </div>
+
+        <div class="planner-row">
+          <div class="planner-field">
+            <label for="spouseAge">Spouse Age</label>
+            <input type="number" id="spouseAge" value="30" min="18" max="100">
+            <div class="planner-hint">Used when filing status is married</div>
+          </div>
+          <div class="planner-field">
+            <label for="spouseAnnualIncome">Spouse Income (pre-tax)</label>
+            <input type="number" id="spouseAnnualIncome" value="0" step="1000" min="0">
+          </div>
+          <div class="planner-field">
+            <label for="spouseRetirementAge">Spouse Retirement Age</label>
+            <input type="number" id="spouseRetirementAge" value="67" min="18" max="100">
+          </div>
         </div>
 
         <div class="planner-field">
@@ -139,6 +170,21 @@ const APP_HTML = `
             <label for="socialSecurityBenefit">Social Security Benefit</label>
             <input type="number" id="socialSecurityBenefit" value="0" step="1000" min="0">
             <div class="planner-hint">Annual benefit in today's dollars. You can find your estimate in your Social Security statement or your my Social Security account at ssa.gov.</div>
+          </div>
+        </div>
+
+        <div class="planner-row">
+          <div class="planner-field">
+            <label for="spouseSocialSecurityClaimAge">Spouse Claim Age</label>
+            <select id="spouseSocialSecurityClaimAge">
+              <option value="62">Age 62</option>
+              <option value="67" selected>Age 67</option>
+            </select>
+          </div>
+          <div class="planner-field">
+            <label for="spouseSocialSecurityBenefit">Spouse Social Security</label>
+            <input type="number" id="spouseSocialSecurityBenefit" value="0" step="1000" min="0">
+            <div class="planner-hint">Annual spouse benefit in today's dollars. Ignored unless filing status is married.</div>
           </div>
         </div>
 
@@ -371,7 +417,7 @@ const APP_HTML = `
           <input type="number" id="dpSpending" value="50000" step="1000">
         </div>
         <div class="field">
-          <label for="dpSSIncome">Social Security (at 67)</label>
+          <label for="dpSSIncome">Household Social Security</label>
           <input type="number" id="dpSSIncome" value="20000" step="1000">
         </div>
         <div class="field">
@@ -410,7 +456,7 @@ const APP_HTML = `
           <input type="number" id="coSpending" value="50000" step="1000">
         </div>
         <div class="field">
-          <label for="coSSIncome">Social Security (at 67)</label>
+          <label for="coSSIncome">Household Social Security</label>
           <input type="number" id="coSSIncome" value="20000" step="1000">
         </div>
         <div class="field">
@@ -715,6 +761,11 @@ let cbParsedRows: CostBasisAggregate[] = [];
 let acctMap: Record<string, AccountType> = {};
 const plannerInputIds = [
   'currentAge',
+  'filingStatus',
+  'householdSize',
+  'spouseAge',
+  'spouseAnnualIncome',
+  'spouseRetirementAge',
   'annualIncome',
   'annualExpenses',
   'currentSavings',
@@ -726,12 +777,15 @@ const plannerInputIds = [
   'longevityAge',
   'socialSecurityClaimAge',
   'socialSecurityBenefit',
+  'spouseSocialSecurityClaimAge',
+  'spouseSocialSecurityBenefit',
 ] as const;
 let activeBrokerageFilter = 'all';
 let editingSymbolTicker: string | null = null;
 let currentImportBrokerage: string | null = null;
 let tickerFetchTimer: number | null = null;
 let plannerRetireExpensesCustom = false;
+let lastAutoHouseholdSs = 20000;
 let lastRefreshReport: {
   startedAt: number;
   completedAt: number;
@@ -763,6 +817,42 @@ function readOptionalFloat(id: string): number | null {
   if (!raw) return null;
   const value = parseFloat(raw);
   return Number.isFinite(value) ? value : null;
+}
+
+function readFilingStatus(): FilingStatus {
+  return $('filingStatus').value === 'married' ? 'married' : 'single';
+}
+
+function readHouseholdSize(): number {
+  const minimum = readFilingStatus() === 'married' ? 2 : 1;
+  return Math.max(readInt('householdSize', minimum), minimum);
+}
+
+function getPlannerHouseholdProfile() {
+  const filingStatus = readFilingStatus();
+  const currentAge = readInt('currentAge', 30);
+  const spouseAge = filingStatus === 'married' ? readInt('spouseAge', currentAge) : currentAge;
+  return {
+    filingStatus,
+    currentAge,
+    spouseAge,
+    householdSize: readHouseholdSize(),
+    spouseRetirementAge: filingStatus === 'married' ? readInt('spouseRetirementAge', spouseAge) : 0,
+    spouseAnnualIncome: filingStatus === 'married' ? readFloat('spouseAnnualIncome', 0) : 0,
+    socialSecurityBenefit: readFloat('socialSecurityBenefit', 0),
+    spouseSocialSecurityBenefit: filingStatus === 'married' ? readFloat('spouseSocialSecurityBenefit', 0) : 0,
+  };
+}
+
+function syncHouseholdDefaults(force = false): void {
+  const profile = getPlannerHouseholdProfile();
+  const combinedHouseholdSs = profile.socialSecurityBenefit + profile.spouseSocialSecurityBenefit;
+  const dpInput = $('dpSSIncome') as HTMLInputElement;
+  const coInput = $('coSSIncome') as HTMLInputElement;
+
+  if (force || Number(dpInput.value) === lastAutoHouseholdSs) dpInput.value = String(combinedHouseholdSs);
+  if (force || Number(coInput.value) === lastAutoHouseholdSs) coInput.value = String(combinedHouseholdSs);
+  lastAutoHouseholdSs = combinedHouseholdSs;
 }
 
 function syncRetireExpensesFromCurrent(): void {
@@ -816,6 +906,11 @@ function renderPortfolio(): void {
 function readPlannerInputs() {
   return {
     currentAge: readInt('currentAge', 30),
+    filingStatus: readFilingStatus(),
+    householdSize: readHouseholdSize(),
+    spouseAge: readInt('spouseAge', readInt('currentAge', 30)),
+    spouseAnnualIncome: readFloat('spouseAnnualIncome', 0),
+    spouseRetirementAge: readInt('spouseRetirementAge', readInt('spouseAge', readInt('currentAge', 30))),
     annualIncome: readFloat('annualIncome', 100000),
     annualExpenses: readFloat('annualExpenses', 40000),
     currentSavings: readFloat('currentSavings', 50000),
@@ -827,6 +922,8 @@ function readPlannerInputs() {
     longevityAge: readInt('longevityAge', 95),
     socialSecurityClaimAge: readInt('socialSecurityClaimAge', 67),
     socialSecurityBenefit: readFloat('socialSecurityBenefit', 0),
+    spouseSocialSecurityClaimAge: readInt('spouseSocialSecurityClaimAge', 67),
+    spouseSocialSecurityBenefit: readFloat('spouseSocialSecurityBenefit', 0),
   };
 }
 
@@ -895,6 +992,7 @@ function hydratePlannerInputs(): void {
     plannerRetireExpensesCustom = false;
     syncRetireExpensesFromCurrent();
   }
+  syncHouseholdDefaults(true);
 }
 
 function updatePlannerTaxControls(): void {
@@ -903,10 +1001,9 @@ function updatePlannerTaxControls(): void {
   const hint = document.getElementById('taxRateHint');
   if (!autoInput || !taxInput || !hint) return;
 
-  const grossIncome = readFloat('annualIncome', 100000);
-  const incomeTax = calcProgressiveTax(grossIncome);
-  const payrollTax = calcPayrollTax(grossIncome);
-  const autoRate = grossIncome > 0 ? ((incomeTax.tax + payrollTax.totalTax) / grossIncome) * 100 : 0;
+  const inputs = readPlannerInputs();
+  const grossIncome = inputs.annualIncome + (inputs.filingStatus === 'married' ? inputs.spouseAnnualIncome || 0 : 0);
+  const autoRate = calculateFirePlan(inputs).currentEffectiveTaxRate;
   taxInput.disabled = autoInput.checked;
   hint.textContent = autoInput.checked
     ? `Auto: ${autoRate.toFixed(1)}% effective tax from the ${TAX_PLANNING_BASELINE_LABEL} federal income tax plus employee Social Security and Medicare`
@@ -1280,16 +1377,41 @@ function renderHealthcare(): void {
   renderMedicareProjection();
 }
 
+function getHouseholdAcaPremiums(primaryAge: number): {
+  householdSize: number;
+  monthlyGold: number;
+  monthlyBenchmark: number;
+  spouseAgeAtPrimaryAge: number | null;
+} {
+  const household = getPlannerHouseholdProfile();
+  const monthlyGold = estimateGoldPremium(primaryAge);
+  const monthlyBenchmark = estimateBenchmarkPremium(primaryAge);
+  if (household.filingStatus !== 'married') {
+    return { householdSize: household.householdSize, monthlyGold, monthlyBenchmark, spouseAgeAtPrimaryAge: null };
+  }
+
+  const ageOffset = primaryAge - household.currentAge;
+  const spouseAgeAtPrimaryAge = household.spouseAge + ageOffset;
+  const spousePre65 = spouseAgeAtPrimaryAge < 65;
+  return {
+    householdSize: household.householdSize,
+    monthlyGold: spousePre65 ? monthlyGold + estimateGoldPremium(spouseAgeAtPrimaryAge) : monthlyGold,
+    monthlyBenchmark: spousePre65 ? monthlyBenchmark + estimateBenchmarkPremium(spouseAgeAtPrimaryAge) : monthlyBenchmark,
+    spouseAgeAtPrimaryAge,
+  };
+}
+
 function renderHcAgeTable(): void {
   const earned = 0;
   const inv = getInvestmentIncome();
   const income = earned + inv.total;
-  const fplRatio = income / ACA_FPL_BASELINE;
-  const cliffAmt = getAcaCliff();
+  const household = getPlannerHouseholdProfile();
+  const fplRatio = income / (ACA_FPL_BASELINE + Math.max(household.householdSize - 1, 0) * ACA_FPL_ADDITIONAL_PERSON_BASELINE);
+  const cliffAmt = getAcaCliff(0, 0, household.householdSize);
 
   $('hcIncomeDisplay').textContent = `$${fmt(Math.round(income))}`;
   $('hcFplDisplay').textContent = `${fmtD(fplRatio * 100, 0)}% FPL`;
-  $('hcMagiBreakdown').textContent = `Retirement assumption: $0 earned income + $${fmt(Math.round(inv.total))} investment income`;
+  $('hcMagiBreakdown').textContent = `Retirement assumption: $0 earned income + $${fmt(Math.round(inv.total))} investment income across a household of ${household.householdSize}`;
 
   if (fplRatio > 4.0) {
     $('hcCliffWarning').innerHTML = `
@@ -1321,10 +1443,11 @@ function renderHcAgeTable(): void {
   let totalGold = 0;
   let totalSubsidy = 0;
   let totalNet = 0;
-  const maxPremium = estimateGoldPremium(64) * 12;
+  const maxPremium = getHouseholdAcaPremiums(64).monthlyGold * 12;
 
   const rows = ages.map((age) => {
-    const aca = calcAcaSubsidy(income, age);
+    const premiums = getHouseholdAcaPremiums(age);
+    const aca = calcAcaSubsidy(income, age, premiums.householdSize, premiums.monthlyBenchmark, premiums.monthlyGold);
     totalGold += aca.goldPremium;
     totalSubsidy += aca.subsidy;
     totalNet += aca.netPremium;
@@ -1332,7 +1455,7 @@ function renderHcAgeTable(): void {
     const subsidyPct = aca.subsidy > 0 ? (aca.subsidy / aca.goldPremium) * 100 : 0;
 
     return `<tr${age === userAge ? ' style="outline:2px solid var(--accent);outline-offset:-2px;"' : age >= 45 && age <= 64 && age % 5 === 0 ? ' class="hc-highlight"' : ''}>
-      <td>Age ${age}${age === userAge ? ' (you)' : ''}</td>
+      <td>Age ${age}${age === userAge ? ' (you)' : ''}${premiums.spouseAgeAtPrimaryAge !== null ? `<div style="font-size:0.72rem;color:var(--muted);">Spouse ${Math.round(premiums.spouseAgeAtPrimaryAge)}</div>` : ''}</td>
       <td>$${fmt(aca.monthlyGold)}</td>
       <td>$${fmt(aca.goldPremium)}</td>
       <td>$${fmt(aca.monthlyBenchmark)}</td>
@@ -1350,9 +1473,16 @@ function renderHcAgeTable(): void {
   }).join('');
 
   const sampleAge = Math.min(Math.max(userAge, 26), 64);
-  const sampleAca = calcAcaSubsidy(income, sampleAge);
-  const preRetireTotal = ages.reduce((sum, age) => sum + calcAcaSubsidy(income, age).netPremium, 0);
-  const preRetireSubsidy = ages.reduce((sum, age) => sum + calcAcaSubsidy(income, age).subsidy, 0);
+  const samplePremiums = getHouseholdAcaPremiums(sampleAge);
+  const sampleAca = calcAcaSubsidy(income, sampleAge, samplePremiums.householdSize, samplePremiums.monthlyBenchmark, samplePremiums.monthlyGold);
+  const preRetireTotal = ages.reduce((sum, age) => {
+    const premiums = getHouseholdAcaPremiums(age);
+    return sum + calcAcaSubsidy(income, age, premiums.householdSize, premiums.monthlyBenchmark, premiums.monthlyGold).netPremium;
+  }, 0);
+  const preRetireSubsidy = ages.reduce((sum, age) => {
+    const premiums = getHouseholdAcaPremiums(age);
+    return sum + calcAcaSubsidy(income, age, premiums.householdSize, premiums.monthlyBenchmark, premiums.monthlyGold).subsidy;
+  }, 0);
 
   $('hcSummaryRow').innerHTML = `
     <div class="dd-summary-card">
@@ -1400,7 +1530,7 @@ function renderHcAgeTable(): void {
     </div>
     <div style="margin-top:0.75rem;font-size:0.78rem;color:var(--muted);">
       Gold plan premiums estimated using the ${ACA_PLANNING_BASELINE_LABEL} national averages ($650/mo at age 40) with the federal ACA age curve.
-      Subsidies calculated against the Silver benchmark ($625/mo at age 40). Actual premiums vary by location.
+      Subsidies calculated against the Silver benchmark ($625/mo at age 40). Household size is set to ${household.householdSize}. Actual premiums vary by location.
       <span style="display:inline-flex;align-items:center;gap:0.3rem;margin-left:0.5rem;">
         <span class="dot" style="width:8px;height:8px;border-radius:2px;background:var(--muted);display:inline-block;"></span> Full premium
         <span class="dot" style="width:8px;height:8px;border-radius:2px;background:var(--accent);display:inline-block;margin-left:0.5rem;"></span> Subsidy portion
@@ -1410,11 +1540,12 @@ function renderHcAgeTable(): void {
 
 function renderHcIncomeTable(): void {
   const age = Math.min(readRetirementAge(), 64);
-  const cliffAmt = Math.round(getAcaCliff());
+  const premiums = getHouseholdAcaPremiums(age);
+  const cliffAmt = Math.round(getAcaCliff(0, 0, premiums.householdSize));
   const incomes = [15000, 20000, 25000, 30000, 35000, 40000, 45000, 50000, 55000, 60000, cliffAmt - 1000, cliffAmt, cliffAmt + 500, 65000, 70000, 80000, 100000, 120000]
     .filter((income, index, arr) => income > 0 && arr.indexOf(income) === index)
     .sort((a, b) => a - b);
-  const goldMonthly = estimateGoldPremium(age);
+  const goldMonthly = premiums.monthlyGold;
   const goldAnnual = goldMonthly * 12;
 
   $('hcIncomeTable').innerHTML = `
@@ -1424,8 +1555,9 @@ function renderHcIncomeTable(): void {
           <th>MAGI</th><th>% FPL</th><th>Gold Plan</th><th>Subsidy</th><th>You Pay (mo)</th><th>You Pay (yr)</th><th></th>
         </tr></thead>
         <tbody>${incomes.map((inc, index) => {
-          const aca = calcAcaSubsidy(inc, age);
-          const fplPct = fmtD((inc / ACA_FPL_BASELINE) * 100, 0);
+          const aca = calcAcaSubsidy(inc, age, premiums.householdSize, premiums.monthlyBenchmark, premiums.monthlyGold);
+          const householdFpl = getAcaCliff(0, 0, premiums.householdSize) / 4;
+          const fplPct = fmtD((inc / householdFpl) * 100, 0);
           const prev = incomes[index - 1] || 0;
           const isCliff = inc > cliffAmt && prev <= cliffAmt;
           const atCliff = Math.abs(inc - cliffAmt) < 1000;
@@ -1598,6 +1730,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
   const annualSpending = readFloat(`${prefix}Spending`, 50000);
   const inflation = readFloat('inflationRate', 3) / 100;
   const healthcareInflation = 0.03;
+  const householdSize = readHouseholdSize();
   const pre65HealthcareLoad = 1.5;
   const iraBalance = portfolioBalances.ira;
   const taxableCashBal = portfolioBalances.taxableCash;
@@ -1653,7 +1786,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
     return;
   }
 
-  $(`${prefix}Assumptions`).textContent = `Using current holdings automatically. Retirement earned income is assumed to be $0. Annual returns used: Taxable invested ${fmtD(taxableGrowthPct, 1)}%${taxableReturnOverride ? ` (manual; estimate ${fmtD(estimatedTaxableGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, taxable cash ${fmtD(taxableCashGrowthPct, 1)}%${taxableReturnOverride ? ' (matching manual taxable override)' : ' (cash estimate)'}, IRA ${fmtD(iraGrowthPct, 1)}%${iraReturnOverride ? ` (manual; estimate ${fmtD(estimatedIraGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, Roth/HSA ${fmtD(rothGrowthPct, 1)}%${rothReturnOverride ? ` (manual; estimate ${fmtD(estimatedRothGrowthPct, 1)}%)` : ' (holdings mix estimate)'}. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies with a 50% load and ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA. Taxable cash is spent before selling appreciated taxable assets.${allowConversion ? '' : ' Roth conversions are disabled in this view.'}`;
+  $(`${prefix}Assumptions`).textContent = `Using current holdings automatically. Retirement earned income is assumed to be $0. Annual returns used: Taxable invested ${fmtD(taxableGrowthPct, 1)}%${taxableReturnOverride ? ` (manual; estimate ${fmtD(estimatedTaxableGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, taxable cash ${fmtD(taxableCashGrowthPct, 1)}%${taxableReturnOverride ? ' (matching manual taxable override)' : ' (cash estimate)'}, IRA ${fmtD(iraGrowthPct, 1)}%${iraReturnOverride ? ` (manual; estimate ${fmtD(estimatedIraGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, Roth/HSA ${fmtD(rothGrowthPct, 1)}%${rothReturnOverride ? ` (manual; estimate ${fmtD(estimatedRothGrowthPct, 1)}%)` : ' (holdings mix estimate)'}. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies for a household of ${householdSize} with a 50% load and ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA. Taxable cash is spent before selling appreciated taxable assets.${allowConversion ? '' : ' Roth conversions are disabled in this view.'}`;
 
   if (startAge >= lifeExp) {
     $(`${prefix}Results`).innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">Life expectancy must be greater than current age.</div></div>';
@@ -1681,7 +1814,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
     }
 
     const inflationFactor = Math.pow(1 + healthcareInflation, yearsFromStart);
-    const aca = calcAcaSubsidyForYear(magi, age, yearsFromStart, inflation);
+    const aca = calcAcaSubsidyForYear(magi, age, yearsFromStart, inflation, householdSize);
     const acaSub = aca.medicaidEligible ? 0 : (aca.subsidy || 0) * inflationFactor;
     return {
       annualCost: aca.netPremium * inflationFactor * pre65HealthcareLoad,
@@ -1773,7 +1906,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
     currentRoth: number,
   ): number {
     if (currentAge > convEndAge || currentIraBal <= 0) return 0;
-    const acaCliff = getAcaCliff(yearsFromStart, inflation);
+    const acaCliff = getAcaCliff(yearsFromStart, inflation, householdSize);
     const topOf12GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.12, yearsFromStart, inflation);
     const topOf22GrossIncome = getTopOfOrdinaryBracketGrossIncome(0.22, yearsFromStart, inflation);
     if (strat === 'aca_safe') {
@@ -1821,12 +1954,12 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
       let bestAmt = 0;
       const step = 5000;
       const maxAmt = Math.min(currentIraBal, 300000);
-      const acaBase = currentAge < 65 ? calcAcaSubsidyForYear(baselineOtherOrdinaryIncome + socialSecurityIncome, currentAge, yearsFromStart, inflation) : null;
+      const acaBase = currentAge < 65 ? calcAcaSubsidyForYear(baselineOtherOrdinaryIncome + socialSecurityIncome, currentAge, yearsFromStart, inflation, householdSize) : null;
       const baseTaxAmt = calcProgressiveTax(baselineTaxOrdinaryIncome, yearsFromStart, inflation).tax;
       for (let amt = step; amt <= maxAmt; amt += step) {
         const projectedTaxOrdinaryIncome = buildIncomeState(baselineOtherOrdinaryIncome + amt, 0, socialSecurityIncome).taxOrdinaryIncome;
         const tax = calcProgressiveTax(projectedTaxOrdinaryIncome, yearsFromStart, inflation).tax - baseTaxAmt;
-        const aca = currentAge < 65 ? calcAcaSubsidyForYear(baselineOtherOrdinaryIncome + socialSecurityIncome + amt, currentAge, yearsFromStart, inflation) : null;
+        const aca = currentAge < 65 ? calcAcaSubsidyForYear(baselineOtherOrdinaryIncome + socialSecurityIncome + amt, currentAge, yearsFromStart, inflation, householdSize) : null;
         const subLost = (acaBase?.subsidy || 0) - (aca?.subsidy || 0);
         const effRate = (tax + subLost) / amt;
         if (effRate < 0.30) bestAmt = amt;
@@ -1903,7 +2036,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
       const inflatedSpending = annualSpending * Math.pow(1 + inflation, yearsFromStart);
       const ssThisYear = age >= 67 ? ssIncome * Math.pow(1 + inflation, age - startAge) : 0;
       const onMedicare = age >= 65;
-      const acaCliff = getAcaCliff(yearsFromStart, inflation);
+      const acaCliff = getAcaCliff(yearsFromStart, inflation, householdSize);
       let rmd = 0;
       if (age >= 73) {
         const factor = getRmdFactor(age) || 10;
@@ -3589,6 +3722,11 @@ function loadDemoPortfolio(event: Event): void {
   cbParsedRows = [];
   const plannerDefaults: Record<(typeof plannerInputIds)[number], string> = {
     currentAge: '50',
+    filingStatus: 'single',
+    householdSize: '1',
+    spouseAge: '50',
+    spouseAnnualIncome: '0',
+    spouseRetirementAge: '67',
     annualIncome: '100000',
     annualExpenses: '40000',
     currentSavings: '250000',
@@ -3600,11 +3738,14 @@ function loadDemoPortfolio(event: Event): void {
     longevityAge: '95',
     socialSecurityClaimAge: '67',
     socialSecurityBenefit: '0',
+    spouseSocialSecurityClaimAge: '67',
+    spouseSocialSecurityBenefit: '0',
   };
   for (const id of plannerInputIds) $(id).value = plannerDefaults[id];
   $('taxRateAuto').checked = true;
   plannerRetireExpensesCustom = false;
   syncRetireExpensesFromCurrent();
+  syncHouseholdDefaults(true);
   $('retirementAge').value = '55';
   persist();
   persistYieldCache();
@@ -3759,6 +3900,8 @@ function attachStaticListeners(): void {
     $(id).addEventListener($(id).tagName === 'SELECT' ? 'change' : 'input', () => {
       if (id === 'annualExpenses') syncRetireExpensesFromCurrent();
       if (id === 'retireExpenses') plannerRetireExpensesCustom = $('retireExpenses').value !== $('annualExpenses').value;
+      if (id === 'filingStatus' && $('filingStatus').value === 'married' && readInt('householdSize', 1) < 2) $('householdSize').value = '2';
+      syncHouseholdDefaults();
       updatePlannerTaxControls();
       persistPlannerInputs();
       if (id === 'currentAge') localStorage.setItem('fire_user_age', $(id).value);
@@ -3776,6 +3919,7 @@ hydratePlannerInputs();
 const savedRetirementAge = localStorage.getItem('fire_retirement_age');
 if (savedRetirementAge) $('retirementAge').value = savedRetirementAge;
 syncRetireExpensesFromCurrent();
+syncHouseholdDefaults(true);
 updatePlannerTaxControls();
 syncRetirementAgeDefault();
 

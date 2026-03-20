@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getAcaContributionPct, calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, getAcaCliff } from '../../src/calc/aca';
+import { getAcaContributionPct, calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, getAcaCliff, getAcaHouseholdFpl } from '../../src/calc/aca';
 import { ACA_FPL_BASELINE } from '../../src/constants/aca';
 
 describe('getAcaContributionPct', () => {
@@ -92,6 +92,11 @@ describe('getAcaCliff', () => {
 
   it('inflates the cliff over time', () => {
     expect(getAcaCliff(10, 0.03)).toBeGreaterThan(getAcaCliff());
+  });
+
+  it('raises the cliff for larger households', () => {
+    expect(getAcaHouseholdFpl(2)).toBeGreaterThan(getAcaHouseholdFpl(1));
+    expect(getAcaCliff(0, 0, 2)).toBeGreaterThan(getAcaCliff());
   });
 });
 

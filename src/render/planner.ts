@@ -156,12 +156,12 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
     <div class="stat blue">
       <div class="label">Need After SS Starts</div>
       <div class="value">$${fmtK(result.netRetireExpensesAfterSocialSecurity)}/yr</div>
-      <div class="sub">${result.socialSecurityAnnualBenefit > 0 ? `$${fmtK(result.postSsPortfolioNeedAtClaim)}/yr in claim-year dollars after Social Security starts` : 'No Social Security reduction modeled'}</div>
+      <div class="sub">${result.householdSocialSecurityAnnualBenefit > 0 ? `$${fmtK(result.postSsPortfolioNeedAtClaim)}/yr in claim-year dollars after household Social Security starts` : 'No Social Security reduction modeled'}</div>
     </div>
     <div class="stat blue">
-      <div class="label">Social Security</div>
-      <div class="value">${result.socialSecurityAnnualBenefit > 0 ? `$${fmtK(result.socialSecurityAnnualBenefit)}/yr` : 'Off'}</div>
-      <div class="sub">${result.socialSecurityAnnualBenefit > 0 ? `Claimed at ${result.socialSecurityClaimAge}` : 'No Social Security reduction modeled'}</div>
+      <div class="label">Household Social Security</div>
+      <div class="value">${result.householdSocialSecurityAnnualBenefit > 0 ? `$${fmtK(result.householdSocialSecurityAnnualBenefit)}/yr` : 'Off'}</div>
+      <div class="sub">${result.householdSocialSecurityAnnualBenefit > 0 ? `${result.householdSocialSecurityStartAge !== null ? `First household benefits start at age ${result.householdSocialSecurityStartAge}. ` : ''}Primary claim age ${result.socialSecurityClaimAge}${result.spouseSocialSecurityAnnualBenefit > 0 && result.spouseSocialSecurityClaimAge !== null ? `, spouse claim age ${result.spouseSocialSecurityClaimAge}` : ''}` : 'No Social Security reduction modeled'}</div>
     </div>
     <div class="stat blue">
       <div class="label">Longevity</div>

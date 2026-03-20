@@ -1,5 +1,6 @@
 export type CategoryKey = 'us_stock' | 'intl_stock' | 'bond' | 'muni' | 'reit' | 'cash' | 'crypto' | 'other';
 export type AccountType = 'roth' | 'hsa' | 'ira' | 'taxable';
+export type FilingStatus = 'single' | 'married';
 
 export interface Holding {
   ticker: string;
