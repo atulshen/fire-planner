@@ -183,6 +183,7 @@ export interface YieldCacheEntry {
   etfCategory?: string;
   detectedCategory?: CategoryKey;
   expenseRatio?: number;
+  dataSource?: string;
   fetched: number;
 }
 

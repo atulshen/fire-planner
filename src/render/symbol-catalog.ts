@@ -13,6 +13,7 @@ interface SymbolRow {
   assetClass: string;
   yield: number;
   expenseRatio: number | null;
+  dataSource: string | null;
   brokerages: string[];
   holdingsCount: number;
   fetched: number;
@@ -84,6 +85,7 @@ function getSymbolRows(): SymbolRow[] {
       assetClass: cache?.assetClass || (category ? CATEGORIES[category]?.label || category : 'Unknown'),
       yield: cache?.yield ?? firstHolding?.dividendYield ?? 0,
       expenseRatio: cache?.expenseRatio ?? null,
+      dataSource: cache?.dataSource ?? null,
       brokerages: [...new Set(symbolHoldings.map((holding) => getBrokerageName(holding.brokerage)))].sort((a, b) => a.localeCompare(b)),
       holdingsCount: symbolHoldings.length,
       fetched: cache?.fetched ?? 0,
@@ -142,6 +144,7 @@ export function renderSymbolCatalogPage(options: SymbolCatalogRenderOptions = {}
               <a href="${getYahooFinanceUrl(row.ticker)}" target="_blank" rel="noreferrer noopener" style="color:var(--blue);text-decoration:none;">
                 ${esc(row.name)}
               </a>
+              ${row.dataSource ? `<div style="font-size:0.72rem;color:var(--muted);margin-top:0.15rem;">Source: ${esc(row.dataSource)}</div>` : ''}
             </td>
             <td style="min-width:280px;white-space:normal;line-height:1.4;">${describeAssetClass(row.assetClass, row.allocation, row.category)}</td>
             <td>${fmtD(row.yield, 1)}%</td>
