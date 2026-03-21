@@ -2235,108 +2235,120 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
       let spendingNeed = inflatedSpending + healthcare.annualCost;
       let netCashAfterTaxes = baselineAfterTaxCash - convTax;
       let spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-      let remaining = normalizeShortfall(spendingNeed - netCashAfterTaxes);
+      let remaining = normalizeShortfall(spendingNeed - spentThisYear);
+      for (let solverPass = 0; solverPass < 8 && remaining > 0; solverPass++) {
+        const startRemaining = remaining;
+        const startSpent = spentThisYear;
+        const startAssets = taxableCash + taxableInvested + ira + rothExisting + rothConverted;
 
-      if (remaining > 0 && taxableCash > 0) {
-        const cashDraw = Math.min(remaining, taxableCash);
-        taxableCash -= cashDraw;
-        taxableFunding += cashDraw;
-        netCashAfterTaxes += cashDraw;
-        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = normalizeShortfall(spendingNeed - spentThisYear);
-      }
-
-      let roth = rothExisting + rothConverted;
-      if (remaining > 0 && strategy === 'aca_safe' && age < 65 && roth > 0) {
-        const draw = Math.min(remaining, roth);
-        const fromConverted = Math.min(draw, rothConverted);
-        rothConverted -= fromConverted;
-        rothExisting -= (draw - fromConverted);
-        rothFunding += draw;
-        netCashAfterTaxes += draw;
-        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = normalizeShortfall(spendingNeed - spentThisYear);
-      }
-
-      if (remaining > 0 && taxableInvested > 0) {
-        const gainRatio = taxableInvested > 0 ? Math.max(0, 1 - taxableCostBasis / taxableInvested) : 0;
-        const taxBeforeTaxable = currentTax;
-        let adjustedDraw = 0;
-
-        for (let i = 0; i < 3; i++) {
-          const neededNet = Math.max(spendingNeed - netCashAfterTaxes, 0);
-          adjustedDraw = solveGrossWithdrawal(taxableInvested, neededNet, (gross) => {
-            const gains = gross * gainRatio;
-            const projectedIncomeState = buildIncomeState(ordinaryIncomeExSs, gains, ssThisYear);
-            const taxAfter = calcFederalIncomeTax(projectedIncomeState.taxOrdinaryIncome, gains, yearsFromStart, inflation).totalTax;
-            return gross - (taxAfter - taxBeforeTaxable);
-          });
-
-          realizedTaxableGains = adjustedDraw * gainRatio;
-          currentIncomeState = buildIncomeState(ordinaryIncomeExSs, realizedTaxableGains, ssThisYear);
-          taxIncome = currentIncomeState.taxIncome;
-          acaIncome = currentIncomeState.acaIncome;
-          healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, onMedicare ? currentIncomeState.medicareIncome : acaIncome);
-          acaSub = healthcare.acaSub;
-          const updatedSpendingNeed = inflatedSpending + healthcare.annualCost;
-          if (Math.abs(updatedSpendingNeed - spendingNeed) < 1) {
-            spendingNeed = updatedSpendingNeed;
-            break;
-          }
-          spendingNeed = updatedSpendingNeed;
+        if (remaining > 0 && taxableCash > 0) {
+          const cashDraw = Math.min(remaining, taxableCash);
+          taxableCash -= cashDraw;
+          taxableFunding += cashDraw;
+          netCashAfterTaxes += cashDraw;
+          spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+          remaining = normalizeShortfall(spendingNeed - spentThisYear);
         }
 
-        const taxAfterTaxable = calcFederalIncomeTax(currentIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
-        const ltcgTax = taxAfterTaxable - taxBeforeTaxable;
-        taxableCostBasis -= adjustedDraw * (1 - gainRatio);
-        taxableInvested -= adjustedDraw;
-        currentTax = taxAfterTaxable;
-        taxesPaidThisYear = currentTax;
-        taxableFunding += adjustedDraw - ltcgTax;
-        netCashAfterTaxes += adjustedDraw - ltcgTax;
-        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = normalizeShortfall(spendingNeed - spentThisYear);
+        let roth = rothExisting + rothConverted;
+        if (remaining > 0 && strategy === 'aca_safe' && age < 65 && roth > 0) {
+          const draw = Math.min(remaining, roth);
+          const fromConverted = Math.min(draw, rothConverted);
+          rothConverted -= fromConverted;
+          rothExisting -= (draw - fromConverted);
+          rothFunding += draw;
+          netCashAfterTaxes += draw;
+          spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+          remaining = normalizeShortfall(spendingNeed - spentThisYear);
+        }
+
+        if (remaining > 0 && taxableInvested > 0) {
+          const gainRatio = taxableInvested > 0 ? Math.max(0, 1 - taxableCostBasis / taxableInvested) : 0;
+          const taxBeforeTaxable = currentTax;
+          let adjustedDraw = 0;
+
+          for (let i = 0; i < 3; i++) {
+            const neededNet = Math.max(spendingNeed - netCashAfterTaxes, 0);
+            adjustedDraw = solveGrossWithdrawal(taxableInvested, neededNet, (gross) => {
+              const gains = gross * gainRatio;
+              const projectedIncomeState = buildIncomeState(ordinaryIncomeExSs, gains, ssThisYear);
+              const taxAfter = calcFederalIncomeTax(projectedIncomeState.taxOrdinaryIncome, gains, yearsFromStart, inflation).totalTax;
+              return gross - (taxAfter - taxBeforeTaxable);
+            });
+
+            realizedTaxableGains = adjustedDraw * gainRatio;
+            currentIncomeState = buildIncomeState(ordinaryIncomeExSs, realizedTaxableGains, ssThisYear);
+            taxIncome = currentIncomeState.taxIncome;
+            acaIncome = currentIncomeState.acaIncome;
+            healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, onMedicare ? currentIncomeState.medicareIncome : acaIncome);
+            acaSub = healthcare.acaSub;
+            const updatedSpendingNeed = inflatedSpending + healthcare.annualCost;
+            if (Math.abs(updatedSpendingNeed - spendingNeed) < 1) {
+              spendingNeed = updatedSpendingNeed;
+              break;
+            }
+            spendingNeed = updatedSpendingNeed;
+          }
+
+          const taxAfterTaxable = calcFederalIncomeTax(currentIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
+          const ltcgTax = taxAfterTaxable - taxBeforeTaxable;
+          taxableCostBasis -= adjustedDraw * (1 - gainRatio);
+          taxableInvested -= adjustedDraw;
+          currentTax = taxAfterTaxable;
+          taxesPaidThisYear = currentTax;
+          taxableFunding += adjustedDraw - ltcgTax;
+          netCashAfterTaxes += adjustedDraw - ltcgTax;
+          spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+          remaining = normalizeShortfall(spendingNeed - spentThisYear);
+        }
+
+        if (remaining > 0 && ira > 0) {
+          const taxBeforeIra = currentTax;
+          const draw = solveGrossWithdrawal(ira, remaining, (gross) => {
+            const projectedIncomeState = buildIncomeState(ordinaryIncomeExSs + gross, realizedTaxableGains, ssThisYear);
+            const taxAfter = calcFederalIncomeTax(projectedIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
+            return gross - (taxAfter - taxBeforeIra);
+          });
+          const postIraIncomeState = buildIncomeState(ordinaryIncomeExSs + draw, realizedTaxableGains, ssThisYear);
+          const taxAfterIra = calcFederalIncomeTax(postIraIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
+          const drawTax = taxAfterIra - taxBeforeIra;
+          ira -= draw;
+          ordinaryIncomeExSs += draw;
+          currentIncomeState = postIraIncomeState;
+          taxIncome = currentIncomeState.taxIncome;
+          acaIncome = currentIncomeState.acaIncome;
+          currentTax = taxAfterIra;
+          taxesPaidThisYear = currentTax;
+          healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, onMedicare ? currentIncomeState.medicareIncome : acaIncome);
+          acaSub = healthcare.acaSub;
+          spendingNeed = inflatedSpending + healthcare.annualCost;
+          iraFunding += draw - drawTax;
+          netCashAfterTaxes += draw - drawTax;
+          spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+          remaining = normalizeShortfall(spendingNeed - spentThisYear);
+        }
+
+        roth = rothExisting + rothConverted;
+        if (remaining > 0 && roth > 0) {
+          const draw = Math.min(remaining, roth);
+          const fromConverted = Math.min(draw, rothConverted);
+          rothConverted -= fromConverted;
+          rothExisting -= (draw - fromConverted);
+          rothFunding += draw;
+          netCashAfterTaxes += draw;
+          spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
+          remaining = normalizeShortfall(spendingNeed - spentThisYear);
+        }
+
+        const endAssets = taxableCash + taxableInvested + ira + rothExisting + rothConverted;
+        const noProgress = Math.abs(remaining - startRemaining) < 1
+          && Math.abs(spentThisYear - startSpent) < 1
+          && Math.abs(endAssets - startAssets) < 1;
+        if (noProgress) break;
       }
 
-      if (remaining > 0 && ira > 0) {
-        const taxBeforeIra = currentTax;
-        const draw = solveGrossWithdrawal(ira, remaining, (gross) => {
-          const projectedIncomeState = buildIncomeState(ordinaryIncomeExSs + gross, realizedTaxableGains, ssThisYear);
-          const taxAfter = calcFederalIncomeTax(projectedIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
-          return gross - (taxAfter - taxBeforeIra);
-        });
-        const postIraIncomeState = buildIncomeState(ordinaryIncomeExSs + draw, realizedTaxableGains, ssThisYear);
-        const taxAfterIra = calcFederalIncomeTax(postIraIncomeState.taxOrdinaryIncome, realizedTaxableGains, yearsFromStart, inflation).totalTax;
-        const drawTax = taxAfterIra - taxBeforeIra;
-        ira -= draw;
-        ordinaryIncomeExSs += draw;
-        currentIncomeState = postIraIncomeState;
-        taxIncome = currentIncomeState.taxIncome;
-        acaIncome = currentIncomeState.acaIncome;
-        currentTax = taxAfterIra;
-        taxesPaidThisYear = currentTax;
-        healthcare = estimateAnnualHealthcareCost(age, yearsFromStart, onMedicare ? currentIncomeState.medicareIncome : acaIncome);
-        acaSub = healthcare.acaSub;
-        spendingNeed = inflatedSpending + healthcare.annualCost;
-        iraFunding += draw - drawTax;
-        netCashAfterTaxes += draw - drawTax;
-        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = normalizeShortfall(spendingNeed - spentThisYear);
-      }
-
-      roth = rothExisting + rothConverted;
-      if (remaining > 0 && roth > 0) {
-        const draw = Math.min(remaining, roth);
-        const fromConverted = Math.min(draw, rothConverted);
-        rothConverted -= fromConverted;
-        rothExisting -= (draw - fromConverted);
-        rothFunding += draw;
-        netCashAfterTaxes += draw;
-        spentThisYear = Math.max(Math.min(netCashAfterTaxes, spendingNeed), 0);
-        remaining = normalizeShortfall(spendingNeed - spentThisYear);
-      }
-
-      if (remaining > 0 && ranOutAge === null) ranOutAge = age;
+      const liquidatableAssetsRemaining = taxableCash + taxableInvested + ira + rothExisting + rothConverted;
+      if (remaining > 0 && liquidatableAssetsRemaining <= 1 && ranOutAge === null) ranOutAge = age;
 
       const cashSurplus = Math.max(netCashAfterTaxes - spentThisYear, 0);
       if (cashSurplus > 0) {
