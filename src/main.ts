@@ -2462,7 +2462,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
   const taxDiff = withConv.totalTaxPaid - noConv.totalTaxPaid;
   const subsidyDiff = withConv.totalSubsidyReceived - noConv.totalSubsidyReceived;
   const wealthDiff = withConv.endOfLifeWealth - noConv.endOfLifeWealth;
-  const recommendation = recommendRothConversion(wealthDiff, taxDiff);
+  const recommendation = recommendRothConversion(wealthDiff, taxDiff, withConv.ranOutAge, noConv.ranOutAge);
   const shouldConvert = recommendation.action === 'convert';
 
   const strategyDesc: Record<string, string> = {
@@ -2519,11 +2519,15 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
     : recommendation.tone === 'negative'
       ? 'var(--red)'
       : 'var(--text)';
-  const recommendationWhy = recommendation.driver === 'wealth'
-    ? Math.abs(wealthDiff) <= 1000
-      ? `Modeled end-of-life wealth is roughly flat. Lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`}.`
-      : `Modeled end-of-life wealth is ${wealthDirection} by ${fmtAbsCoMoney(wealthDiff)} with conversions. Lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`}.`
-    : `End-of-life wealth is roughly flat, but lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`} with conversions.`;
+  const recommendationWhy = recommendation.driver === 'depletion'
+    ? shouldConvert
+      ? `Conversions keep the plan funded longer${noConv.ranOutAge !== null ? ` by avoiding depletion at age ${noConv.ranOutAge}` : ''}.`
+      : `Conversions deplete the plan earlier${withConv.ranOutAge !== null ? ` at age ${withConv.ranOutAge}` : ''}, so they are not preferred even if taxes are lower.`
+    : recommendation.driver === 'wealth'
+      ? Math.abs(wealthDiff) <= 1000
+        ? `Modeled end-of-life wealth is roughly flat. Lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`}.`
+        : `Modeled end-of-life wealth is ${wealthDirection} by ${fmtAbsCoMoney(wealthDiff)} with conversions. Lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`}.`
+      : `End-of-life wealth is roughly flat, but lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`} with conversions.`;
   const recommendationSecondary = subsidyDiff < -1000
     ? `A loss of ${fmtAbsCoMoney(subsidyDiff)} in ACA subsidies is part of the drag.`
     : subsidyDiff > 1000
