@@ -38,6 +38,7 @@ import { renderBrokeragePage } from './render/brokerages';
 import { renderSymbolCatalogPage } from './render/symbol-catalog';
 import { calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, estimateGoldPremium, getAcaCliff } from './calc/aca';
 import { calcFederalIncomeTax, calcPayrollTax, calcProgressiveTax, calcTaxableSocialSecurity, getTopOfOrdinaryBracketGrossIncome } from './calc/tax';
+import { recommendRothConversion } from './calc/conversion';
 import { getIrmaaSurcharge, getMedicareAnnualCost } from './calc/medicare';
 import { ACA_FPL_ADDITIONAL_PERSON_BASELINE, ACA_FPL_BASELINE, ACA_PLANNING_BASELINE_LABEL } from './constants/aca';
 import { IRMAA_BRACKETS, MEDICARE_PLANNING_BASELINE_LABEL } from './constants/medicare';
@@ -2342,7 +2343,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
 
       ira = Math.max(ira, 0) * (1 + iraGrowth);
       rothExisting = Math.max(rothExisting, 0) * (1 + rothGrowth);
-      rothConverted = Math.max(rothConverted, 0) * (1 + iraGrowth);
+      rothConverted = Math.max(rothConverted, 0) * (1 + rothGrowth);
       taxableCash = Math.max(taxableCash, 0) * (1 + taxableCashGrowth);
       taxableInvested = Math.max(taxableInvested, 0) * (1 + taxableInvestedGrowth);
       taxableCostBasis = Math.max(taxableCostBasis, 0) * (1 + taxableInvestedGrowth * 0.3);
@@ -2407,7 +2408,8 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
   const taxDiff = withConv.totalTaxPaid - noConv.totalTaxPaid;
   const subsidyDiff = withConv.totalSubsidyReceived - noConv.totalSubsidyReceived;
   const wealthDiff = withConv.endOfLifeWealth - noConv.endOfLifeWealth;
-  const isWorthIt = wealthDiff > 0;
+  const recommendation = recommendRothConversion(wealthDiff, taxDiff);
+  const shouldConvert = recommendation.action === 'convert';
 
   const strategyDesc: Record<string, string> = {
     aca_safe: 'Stays below the ACA cliff (400% FPL) before 65, then fills 22% bracket.',
@@ -2445,6 +2447,34 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
     if (abs > 0 && abs < 1000) return `${amount < 0 ? '-<$1k' : '<$1k'}`;
     return `${amount < 0 ? '-$' : '$'}${fmtK(abs)}`;
   }
+
+  function fmtAbsCoMoney(amount: number): string {
+    return fmtCoMoney(Math.abs(amount));
+  }
+
+  const wealthDirection = wealthDiff > 0 ? 'higher' : wealthDiff < 0 ? 'lower' : 'about the same';
+  const taxDirection = taxDiff < 0 ? 'lower' : taxDiff > 0 ? 'higher' : 'about the same';
+  const recommendationTitle = shouldConvert ? 'Convert' : 'Do not convert';
+  const recommendationToneClass = recommendation.tone === 'positive'
+    ? 'positive'
+    : recommendation.tone === 'negative'
+      ? 'negative'
+      : 'neutral';
+  const recommendationTitleColor = recommendation.tone === 'positive'
+    ? 'var(--accent)'
+    : recommendation.tone === 'negative'
+      ? 'var(--red)'
+      : 'var(--text)';
+  const recommendationWhy = recommendation.driver === 'wealth'
+    ? Math.abs(wealthDiff) <= 1000
+      ? `Modeled end-of-life wealth is roughly flat. Lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`}.`
+      : `Modeled end-of-life wealth is ${wealthDirection} by ${fmtAbsCoMoney(wealthDiff)} with conversions. Lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`}.`
+    : `End-of-life wealth is roughly flat, but lifetime taxes are ${taxDirection}${taxDiff === 0 ? '' : ` by ${fmtAbsCoMoney(taxDiff)}`} with conversions.`;
+  const recommendationSecondary = subsidyDiff < -1000
+    ? `A loss of ${fmtAbsCoMoney(subsidyDiff)} in ACA subsidies is part of the drag.`
+    : subsidyDiff > 1000
+      ? `The strategy also improves ACA subsidies by ${fmtAbsCoMoney(subsidyDiff)}.`
+      : '';
 
   function renderScenarioTable(
     title: string,
@@ -2500,15 +2530,15 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
 
   if (allowConversion) {
     $(`${prefix}Results`).innerHTML = `
-      <div class="co-optimal-callout ${isWorthIt ? 'positive' : wealthDiff < -5000 ? 'negative' : 'neutral'}">
-        <div class="co-optimal-title" style="color:${isWorthIt ? 'var(--accent)' : wealthDiff < -1000 ? 'var(--red)' : 'var(--text)'}">
-          Converting leaves you ${wealthDiff > 0 ? '+' : ''}${fmtCoMoney(wealthDiff)} more end-of-life wealth
+      <div class="co-optimal-callout ${recommendationToneClass}">
+        <div class="co-optimal-title" style="color:${recommendationTitleColor}">
+          ${recommendationTitle}
         </div>
         <div class="co-optimal-sub">
-          With conversions: ${fmtCoMoney(withConv.endOfLifeWealth)} ending wealth, ${fmtCoMoney(withConv.totalTaxPaid)} tax, ${fmtCoMoney(withConv.totalHealthcarePaid)} healthcare paid.
-          Without: ${fmtCoMoney(noConv.endOfLifeWealth)} ending wealth, ${fmtCoMoney(noConv.totalTaxPaid)} tax, ${fmtCoMoney(noConv.totalHealthcarePaid)} healthcare paid.
-          ${subsidyDiff < -1000 ? `You lose ${fmtCoMoney(Math.abs(subsidyDiff))} in ACA subsidies, but ` : ''}
-          ${isWorthIt ? 'the tax-free Roth growth more than makes up for it.' : 'the upfront costs outweigh the benefits.'}
+          ${recommendationWhy}
+          ${recommendationSecondary}
+          With conversions: ${fmtCoMoney(withConv.endOfLifeWealth)} ending wealth and ${fmtCoMoney(withConv.totalTaxPaid)} lifetime taxes.
+          Without conversions: ${fmtCoMoney(noConv.endOfLifeWealth)} ending wealth and ${fmtCoMoney(noConv.totalTaxPaid)} lifetime taxes.
         </div>
       </div>
       <div class="co-result-grid">
@@ -2518,7 +2548,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
           <div class="co-line"><span class="label">Total taxes paid (lifetime)</span><span class="val red">${fmtCoMoney(withConv.totalTaxPaid)}</span></div>
           <div class="co-line"><span class="label">ACA subsidies received</span><span class="val green">${fmtCoMoney(withConv.totalSubsidyReceived)}</span></div>
           <div class="co-line"><span class="label">Healthcare paid</span><span class="val">${fmtCoMoney(withConv.totalHealthcarePaid)}</span></div>
-          <div class="co-line total"><span class="label">End-of-life wealth</span><span class="val ${isWorthIt ? 'green' : ''}" style="font-size:1.05rem;">${fmtCoMoney(withConv.endOfLifeWealth)}</span></div>
+          <div class="co-line total"><span class="label">End-of-life wealth</span><span class="val ${shouldConvert ? 'green' : ''}" style="font-size:1.05rem;">${fmtCoMoney(withConv.endOfLifeWealth)}</span></div>
           <div class="co-line"><span class="label">Roth left (tax free)</span><span class="val">${fmtCoMoney(withConv.finalRoth)}</span></div>
           <div class="co-line"><span class="label">Taxable left</span><span class="val">${fmtCoMoney(withConv.finalTaxable)}</span></div>
           <div class="co-line"><span class="label">IRA left (ordinary income)</span><span class="val">${fmtCoMoney(withConv.finalIra)}</span></div>
@@ -2531,7 +2561,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
           <div class="co-line"><span class="label">Total taxes paid (lifetime)</span><span class="val red">${fmtCoMoney(noConv.totalTaxPaid)}</span></div>
           <div class="co-line"><span class="label">ACA subsidies received</span><span class="val green">${fmtCoMoney(noConv.totalSubsidyReceived)}</span></div>
           <div class="co-line"><span class="label">Healthcare paid</span><span class="val">${fmtCoMoney(noConv.totalHealthcarePaid)}</span></div>
-          <div class="co-line total"><span class="label">End-of-life wealth</span><span class="val ${!isWorthIt ? 'green' : ''}" style="font-size:1.05rem;">${fmtCoMoney(noConv.endOfLifeWealth)}</span></div>
+          <div class="co-line total"><span class="label">End-of-life wealth</span><span class="val ${!shouldConvert ? 'green' : ''}" style="font-size:1.05rem;">${fmtCoMoney(noConv.endOfLifeWealth)}</span></div>
           <div class="co-line"><span class="label">Roth left (tax free)</span><span class="val">${fmtCoMoney(noConv.finalRoth)}</span></div>
           <div class="co-line"><span class="label">Taxable left</span><span class="val">${fmtCoMoney(noConv.finalTaxable)}</span></div>
           <div class="co-line"><span class="label">IRA left (ordinary income)</span><span class="val">${fmtCoMoney(noConv.finalIra)}</span></div>
@@ -2540,10 +2570,10 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
         </div>
       </div>
       <div class="co-result-grid" style="margin-top:0;">
-        <div class="co-cost-stack" style="background:${isWorthIt ? 'var(--accent-dim)' : '#7f1d1d'};border-color:${isWorthIt ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'};">
+        <div class="co-cost-stack" style="background:${shouldConvert ? 'var(--accent-dim)' : recommendation.tone === 'negative' ? '#7f1d1d' : 'var(--surface)'};border-color:${shouldConvert ? 'rgba(34,197,94,0.3)' : recommendation.tone === 'negative' ? 'rgba(239,68,68,0.3)' : 'var(--border)'};">
           <div class="co-line" style="border:none;font-size:0.95rem;">
-            <span class="label" style="color:var(--text);font-weight:700;">Difference in end-of-life wealth</span>
-            <span class="val" style="font-size:1.1rem;color:${isWorthIt ? 'var(--accent)' : 'var(--red)'}">${wealthDiff >= 0 ? '+' : ''}${fmtCoMoney(wealthDiff)}</span>
+            <span class="label" style="color:var(--text);font-weight:700;">Recommendation</span>
+            <span class="val" style="font-size:1.1rem;color:${recommendationTitleColor}">${recommendationTitle}</span>
           </div>
         </div>
         <div class="co-cost-stack">
@@ -2570,7 +2600,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
         ${strategyDesc[strategy]}
         Both scenarios start with $${fmt(annualSpending)}/yr spending, inflated ${fmtD(inflation * 100, 1)}% annually, plus healthcare costs.
         Withdrawal order: RMDs first, then taxable (long-term capital gains brackets), then IRA (ordinary income brackets), then Roth/HSA (modeled as tax-free).
-        Growth assumptions are inferred from your current holdings by account rather than a manual growth-rate input.
+        Invested growth assumptions come from your overall portfolio mix, with taxable cash modeled separately unless you override the return inputs above.
         Heir taxes assume a non-spouse heir withdraws the inherited IRA evenly over 10 years and pays ordinary federal income tax under the same tax table model.
         <br>* = Medicare (65+). + = RMDs begin (73+).
       </p>
