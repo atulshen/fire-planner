@@ -284,6 +284,17 @@ const APP_HTML = `
             </div>
           </div>
         </div>
+
+        <div class="panel">
+          <div class="planner-scenario-toolbar">
+            <div>
+              <h2>Scenario Manager</h2>
+              <div class="planner-hint">Save multiple planner setups, compare them here, and choose which one the drawdown page should use.</div>
+            </div>
+            <button class="btn primary" onclick="saveCurrentScenario()">Save Current Scenario</button>
+          </div>
+          <div id="plannerScenarioManager"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -450,6 +461,7 @@ const APP_HTML = `
         This uses the same lifetime simulator as the Roth conversion calculator, but with Roth conversions disabled.
         It starts at the Retirement Phase age shown above and focuses on how the portfolio funds spending over time.
       </p>
+      <div id="dpScenarioBanner"></div>
 
       <div class="co-controls">
         <div class="field">
@@ -828,6 +840,36 @@ const plannerInputIds = [
   'spouseSocialSecurityClaimAge',
   'spouseSocialSecurityBenefit',
 ] as const;
+const drawdownInputIds = [
+  'dpLifeExp',
+  'dpSpending',
+  'dpSSIncome',
+  'dpTaxableReturn',
+  'dpIraReturn',
+  'dpRothReturn',
+] as const;
+const PLANNER_INPUTS_STORAGE_KEY = 'fire_planner_inputs';
+const DRAWDOWN_INPUTS_STORAGE_KEY = 'fire_drawdown_inputs';
+const PLANNING_SCENARIOS_STORAGE_KEY = 'fire_planning_scenarios';
+const ACTIVE_DRAWDOWN_SCENARIO_STORAGE_KEY = 'fire_active_drawdown_scenario_id';
+
+type PlannerInputSnapshot = Record<(typeof plannerInputIds)[number], string> & {
+  taxRateAuto: boolean;
+  retireExpensesCustom: boolean;
+};
+
+type DrawdownInputSnapshot = Record<(typeof drawdownInputIds)[number], string>;
+
+type PlanningScenario = {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  plannerInputs: PlannerInputSnapshot;
+  retirementAge: string;
+  drawdownInputs: DrawdownInputSnapshot;
+};
+
 let activeBrokerageFilter = 'all';
 let editingSymbolTicker: string | null = null;
 let currentImportBrokerage: string | null = null;
@@ -835,6 +877,7 @@ let tickerFetchTimer: number | null = null;
 let plannerRetireExpensesCustom = false;
 let lastAutoHouseholdSs = 20000;
 let symbolApiKey = localStorage.getItem(SYMBOL_API_KEY_STORAGE_KEY) || '';
+let activeDrawdownScenarioId = localStorage.getItem(ACTIVE_DRAWDOWN_SCENARIO_STORAGE_KEY);
 type SymbolRefreshSuccess = {
   ticker: string;
   fields: string[];
@@ -892,6 +935,98 @@ let lastRefreshReport: SymbolRefreshReport | null = (() => {
   if (!raw) return null;
   return normalizeStoredRefreshReport(raw);
 })();
+
+function createScenarioId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `scenario-${Date.now()}-${Math.round(Math.random() * 1_000_000)}`;
+}
+
+function emptyPlannerInputSnapshot(): PlannerInputSnapshot {
+  return {
+    currentAge: '30',
+    filingStatus: 'single',
+    householdSize: '1',
+    spouseAge: '30',
+    spouseAnnualIncome: '0',
+    spouseRetirementAge: '67',
+    annualIncome: '100000',
+    annualExpenses: '40000',
+    currentSavings: '50000',
+    returnRate: '7',
+    inflationRate: '3',
+    withdrawalRate: '4',
+    taxRate: '25',
+    retireExpenses: '40000',
+    longevityAge: '95',
+    socialSecurityClaimAge: '67',
+    socialSecurityBenefit: '0',
+    spouseSocialSecurityClaimAge: '67',
+    spouseSocialSecurityBenefit: '0',
+    taxRateAuto: true,
+    retireExpensesCustom: false,
+  };
+}
+
+function emptyDrawdownInputSnapshot(): DrawdownInputSnapshot {
+  return {
+    dpLifeExp: '90',
+    dpSpending: '50000',
+    dpSSIncome: '20000',
+    dpTaxableReturn: '',
+    dpIraReturn: '',
+    dpRothReturn: '',
+  };
+}
+
+function normalizePlanningScenario(raw: unknown): PlanningScenario | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const scenario = raw as Record<string, any>;
+  const plannerDefaults = emptyPlannerInputSnapshot();
+  const drawdownDefaults = emptyDrawdownInputSnapshot();
+  const plannerInputs = { ...plannerDefaults };
+  const drawdownInputs = { ...drawdownDefaults };
+
+  for (const id of plannerInputIds) {
+    if (scenario.plannerInputs?.[id] != null) plannerInputs[id] = String(scenario.plannerInputs[id]);
+  }
+  if (typeof scenario.plannerInputs?.taxRateAuto === 'boolean') plannerInputs.taxRateAuto = scenario.plannerInputs.taxRateAuto;
+  if (typeof scenario.plannerInputs?.retireExpensesCustom === 'boolean') plannerInputs.retireExpensesCustom = scenario.plannerInputs.retireExpensesCustom;
+  for (const id of drawdownInputIds) {
+    if (scenario.drawdownInputs?.[id] != null) drawdownInputs[id] = String(scenario.drawdownInputs[id]);
+  }
+
+  const id = typeof scenario.id === 'string' && scenario.id.trim() ? scenario.id.trim() : createScenarioId();
+  const name = typeof scenario.name === 'string' && scenario.name.trim() ? scenario.name.trim() : 'Untitled Scenario';
+  const createdAt = Number(scenario.createdAt) || Date.now();
+  const updatedAt = Number(scenario.updatedAt) || createdAt;
+
+  return {
+    id,
+    name,
+    createdAt,
+    updatedAt,
+    plannerInputs,
+    retirementAge: scenario.retirementAge != null ? String(scenario.retirementAge) : '55',
+    drawdownInputs,
+  };
+}
+
+function loadPlanningScenarios(): PlanningScenario[] {
+  const raw = localStorage.getItem(PLANNING_SCENARIOS_STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizePlanningScenario)
+      .filter((scenario): scenario is PlanningScenario => scenario !== null)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  } catch {
+    return [];
+  }
+}
+
+let planningScenarios = loadPlanningScenarios();
 
 function syncGlobalRefs(): void {
   win.acctMap = acctMap;
@@ -995,6 +1130,10 @@ function attachGlobals(): void {
     saveSymbolApiSettings,
     clearSymbolApiSettings,
     clearSymbolRefreshReport,
+    saveCurrentScenario,
+    loadPlanningScenario,
+    useScenarioForDrawdown,
+    deletePlanningScenario,
   });
 }
 
@@ -1032,14 +1171,73 @@ function readPlannerInputs() {
   };
 }
 
-function persistPlannerInputs(): void {
-  const payload = plannerInputIds.reduce<Record<string, number | string | boolean>>((acc, id) => {
+function readPlannerInputSnapshot(): PlannerInputSnapshot {
+  const payload = plannerInputIds.reduce<Record<string, string>>((acc, id) => {
     acc[id] = $(id).value;
     return acc;
-  }, {});
-  payload.taxRateAuto = (document.getElementById('taxRateAuto') as HTMLInputElement | null)?.checked ?? true;
-  payload.retireExpensesCustom = plannerRetireExpensesCustom;
-  localStorage.setItem('fire_planner_inputs', JSON.stringify(payload));
+  }, {}) as Record<(typeof plannerInputIds)[number], string>;
+  return {
+    ...payload,
+    taxRateAuto: (document.getElementById('taxRateAuto') as HTMLInputElement | null)?.checked ?? true,
+    retireExpensesCustom: plannerRetireExpensesCustom,
+  };
+}
+
+function applyPlannerInputSnapshot(snapshot: Partial<PlannerInputSnapshot>): void {
+  for (const id of plannerInputIds) {
+    const value = snapshot[id];
+    if (value != null) $(id).value = String(value);
+  }
+  if (typeof snapshot.taxRateAuto === 'boolean') $('taxRateAuto').checked = snapshot.taxRateAuto;
+  if (typeof snapshot.retireExpensesCustom === 'boolean') plannerRetireExpensesCustom = snapshot.retireExpensesCustom;
+}
+
+function readDrawdownInputSnapshot(): DrawdownInputSnapshot {
+  return drawdownInputIds.reduce<Record<string, string>>((acc, id) => {
+    acc[id] = $(id).value;
+    return acc;
+  }, {}) as DrawdownInputSnapshot;
+}
+
+function applyDrawdownInputSnapshot(snapshot: Partial<DrawdownInputSnapshot>): void {
+  for (const id of drawdownInputIds) {
+    const value = snapshot[id];
+    if (value != null) $(id).value = String(value);
+  }
+}
+
+function persistPlannerInputs(): void {
+  localStorage.setItem(PLANNER_INPUTS_STORAGE_KEY, JSON.stringify(readPlannerInputSnapshot()));
+}
+
+function persistDrawdownInputs(): void {
+  localStorage.setItem(DRAWDOWN_INPUTS_STORAGE_KEY, JSON.stringify(readDrawdownInputSnapshot()));
+}
+
+function persistPlanningScenarios(): void {
+  localStorage.setItem(PLANNING_SCENARIOS_STORAGE_KEY, JSON.stringify(planningScenarios));
+  if (activeDrawdownScenarioId && !planningScenarios.some((scenario) => scenario.id === activeDrawdownScenarioId)) {
+    activeDrawdownScenarioId = null;
+    localStorage.removeItem(ACTIVE_DRAWDOWN_SCENARIO_STORAGE_KEY);
+  }
+}
+
+function setActiveDrawdownScenario(id: string | null): void {
+  activeDrawdownScenarioId = id;
+  if (id) localStorage.setItem(ACTIVE_DRAWDOWN_SCENARIO_STORAGE_KEY, id);
+  else localStorage.removeItem(ACTIVE_DRAWDOWN_SCENARIO_STORAGE_KEY);
+}
+
+function getActiveDrawdownScenario(): PlanningScenario | null {
+  if (!activeDrawdownScenarioId) return null;
+  const scenario = planningScenarios.find((item) => item.id === activeDrawdownScenarioId) || null;
+  if (!scenario) setActiveDrawdownScenario(null);
+  return scenario;
+}
+
+function clearActiveDrawdownScenario(): void {
+  if (!activeDrawdownScenarioId) return;
+  setActiveDrawdownScenario(null);
 }
 
 function getPlannerResult() {
@@ -1072,20 +1270,12 @@ function readRetirementAge(): number {
 }
 
 function hydratePlannerInputs(): void {
-  const saved = localStorage.getItem('fire_planner_inputs');
+  const saved = localStorage.getItem(PLANNER_INPUTS_STORAGE_KEY);
   if (saved) {
     try {
-      const parsed = JSON.parse(saved) as Record<string, number | string | boolean>;
-      for (const id of plannerInputIds) {
-        const value = parsed[id];
-        if (value != null) $(id).value = String(value);
-      }
-      const taxRateAuto = parsed.taxRateAuto;
-      if (typeof taxRateAuto === 'boolean') $('taxRateAuto').checked = taxRateAuto;
-      const retireExpensesCustom = parsed.retireExpensesCustom;
-      if (typeof retireExpensesCustom === 'boolean') {
-        plannerRetireExpensesCustom = retireExpensesCustom;
-      } else if (parsed.retireExpenses != null) {
+      const parsed = JSON.parse(saved) as Partial<PlannerInputSnapshot>;
+      applyPlannerInputSnapshot(parsed);
+      if (typeof parsed.retireExpensesCustom !== 'boolean' && parsed.retireExpenses != null) {
         plannerRetireExpensesCustom = true;
       }
     } catch {
@@ -1098,6 +1288,17 @@ function hydratePlannerInputs(): void {
     syncRetireExpensesFromCurrent();
   }
   syncHouseholdDefaults(true);
+}
+
+function hydrateDrawdownInputs(): void {
+  const saved = localStorage.getItem(DRAWDOWN_INPUTS_STORAGE_KEY);
+  if (!saved) return;
+  try {
+    const parsed = JSON.parse(saved) as Partial<DrawdownInputSnapshot>;
+    applyDrawdownInputSnapshot(parsed);
+  } catch {
+    // Ignore malformed drawdown state.
+  }
 }
 
 function updatePlannerTaxControls(): void {
@@ -1115,10 +1316,191 @@ function updatePlannerTaxControls(): void {
     : `Override: use your own all-in effective tax rate instead of the automatic ${TAX_PLANNING_BASELINE_LABEL} federal and payroll estimate`;
 }
 
+function readScenarioInt(snapshot: Record<string, string | boolean>, key: string, fallback: number): number {
+  const raw = snapshot[key];
+  const value = typeof raw === 'string' ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function readScenarioFloat(snapshot: Record<string, string | boolean>, key: string, fallback: number): number {
+  const raw = snapshot[key];
+  const value = typeof raw === 'string' ? parseFloat(raw) : NaN;
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function calculateScenarioPlan(scenario: PlanningScenario) {
+  return calculateFirePlan({
+    currentAge: readScenarioInt(scenario.plannerInputs, 'currentAge', 30),
+    filingStatus: scenario.plannerInputs.filingStatus === 'married' ? 'married' : 'single',
+    householdSize: readScenarioInt(scenario.plannerInputs, 'householdSize', 1),
+    spouseAge: readScenarioInt(scenario.plannerInputs, 'spouseAge', readScenarioInt(scenario.plannerInputs, 'currentAge', 30)),
+    spouseAnnualIncome: readScenarioFloat(scenario.plannerInputs, 'spouseAnnualIncome', 0),
+    spouseRetirementAge: readScenarioInt(scenario.plannerInputs, 'spouseRetirementAge', readScenarioInt(scenario.plannerInputs, 'spouseAge', 30)),
+    annualIncome: readScenarioFloat(scenario.plannerInputs, 'annualIncome', 100000),
+    annualExpenses: readScenarioFloat(scenario.plannerInputs, 'annualExpenses', 40000),
+    currentSavings: readScenarioFloat(scenario.plannerInputs, 'currentSavings', 50000),
+    returnRate: readScenarioFloat(scenario.plannerInputs, 'returnRate', 7),
+    inflationRate: readScenarioFloat(scenario.plannerInputs, 'inflationRate', 3),
+    withdrawalRate: readScenarioFloat(scenario.plannerInputs, 'withdrawalRate', 4),
+    taxRate: scenario.plannerInputs.taxRateAuto ? null : readScenarioFloat(scenario.plannerInputs, 'taxRate', 25),
+    retireExpenses: readScenarioFloat(scenario.plannerInputs, 'retireExpenses', 40000),
+    longevityAge: readScenarioInt(scenario.plannerInputs, 'longevityAge', 95),
+    socialSecurityClaimAge: readScenarioInt(scenario.plannerInputs, 'socialSecurityClaimAge', 67),
+    socialSecurityBenefit: readScenarioFloat(scenario.plannerInputs, 'socialSecurityBenefit', 0),
+    spouseSocialSecurityClaimAge: readScenarioInt(scenario.plannerInputs, 'spouseSocialSecurityClaimAge', 67),
+    spouseSocialSecurityBenefit: readScenarioFloat(scenario.plannerInputs, 'spouseSocialSecurityBenefit', 0),
+  });
+}
+
+function renderDrawdownScenarioBanner(): void {
+  const area = document.getElementById('dpScenarioBanner');
+  if (!area) return;
+  const activeScenario = getActiveDrawdownScenario();
+  if (activeScenario) {
+    area.innerHTML = `
+      <div class="planner-scenario-banner active">
+        <strong>Using saved scenario:</strong> ${esc(activeScenario.name)}.
+        Editing planner, retirement-age, or drawdown inputs switches this page back to the current draft.
+      </div>`;
+    return;
+  }
+  area.innerHTML = planningScenarios.length > 0
+    ? '<div class="planner-scenario-banner">Drawdown is currently using the current working draft. Pick a saved scenario on the Retirement Age Calculator page if you want to lock one in here.</div>'
+    : '';
+}
+
+function renderScenarioManager(): void {
+  const area = document.getElementById('plannerScenarioManager');
+  if (!area) return;
+
+  if (planningScenarios.length === 0) {
+    area.innerHTML = `
+      <div class="planner-scenario-empty">
+        <div class="planner-scenario-empty-title">No saved scenarios yet</div>
+        <div class="planner-hint">Save the current planner and drawdown inputs as your first scenario, then pick one to drive the drawdown page.</div>
+      </div>`;
+    return;
+  }
+
+  const activeId = getActiveDrawdownScenario()?.id || null;
+  area.innerHTML = `
+    <div class="planner-scenario-list">
+      ${planningScenarios.map((scenario) => {
+        const plan = calculateScenarioPlan(scenario);
+        const retirementAge = Number(scenario.retirementAge) || plan.fireAge || readScenarioInt(scenario.plannerInputs, 'currentAge', 30);
+        const spending = readScenarioFloat(scenario.drawdownInputs, 'dpSpending', 50000);
+        const lifeExp = readScenarioInt(scenario.drawdownInputs, 'dpLifeExp', 90);
+        const ssIncome = readScenarioFloat(scenario.drawdownInputs, 'dpSSIncome', 0);
+        const isActive = scenario.id === activeId;
+        const dateLabel = new Date(scenario.updatedAt).toLocaleDateString();
+        const readinessLabel = plan.fireAge !== null && retirementAge >= plan.fireAge
+          ? 'Retirement age is funded'
+          : plan.fireAge !== null
+            ? `Planner reaches FIRE at ${plan.fireAge}`
+            : 'Planner never reaches FIRE';
+        return `
+          <div class="planner-scenario-card${isActive ? ' is-active' : ''}">
+            <div class="planner-scenario-head">
+              <div>
+                <div class="planner-scenario-name">${esc(scenario.name)}</div>
+                <div class="planner-scenario-meta">Updated ${dateLabel}${isActive ? ' • Active on drawdown' : ''}</div>
+              </div>
+              ${isActive ? '<div class="planner-scenario-badge">Drawdown</div>' : ''}
+            </div>
+            <div class="planner-scenario-grid">
+              <div><span>FIRE age</span><strong>${plan.fireAge ?? 'Not reached'}</strong></div>
+              <div><span>Retire at</span><strong>${retirementAge}</strong></div>
+              <div><span>Spending</span><strong>$${fmtK(spending)}/yr</strong></div>
+              <div><span>Life expectancy</span><strong>${lifeExp}</strong></div>
+              <div><span>Household SS</span><strong>${ssIncome > 0 ? `$${fmtK(ssIncome)}/yr` : 'Off'}</strong></div>
+              <div><span>Status</span><strong>${readinessLabel}</strong></div>
+            </div>
+            <div class="planner-scenario-actions">
+              <button class="btn" onclick="loadPlanningScenario('${scenario.id}')">Load</button>
+              <button class="btn primary" onclick="useScenarioForDrawdown('${scenario.id}')">${isActive ? 'Using for Drawdown' : 'Use for Drawdown'}</button>
+              <button class="btn danger" onclick="deletePlanningScenario('${scenario.id}')">Delete</button>
+            </div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+function captureCurrentScenario(name: string, existing?: PlanningScenario): PlanningScenario {
+  const now = Date.now();
+  return {
+    id: existing?.id || createScenarioId(),
+    name,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    plannerInputs: readPlannerInputSnapshot(),
+    retirementAge: $('retirementAge').value,
+    drawdownInputs: readDrawdownInputSnapshot(),
+  };
+}
+
+function applyScenario(scenario: PlanningScenario, setActive = false): void {
+  applyPlannerInputSnapshot(scenario.plannerInputs);
+  $('retirementAge').value = scenario.retirementAge;
+  applyDrawdownInputSnapshot(scenario.drawdownInputs);
+  if (scenario.plannerInputs.currentAge) localStorage.setItem('fire_user_age', scenario.plannerInputs.currentAge);
+  localStorage.setItem('fire_retirement_age', scenario.retirementAge);
+  updatePlannerHouseholdVisibility();
+  syncRetireExpensesFromCurrent();
+  syncHouseholdDefaults(true);
+  updatePlannerTaxControls();
+  persistPlannerInputs();
+  persistDrawdownInputs();
+  setRetirementAgeAutoUpdated(false);
+  setActiveDrawdownScenario(setActive ? scenario.id : null);
+  renderAll(false);
+}
+
+function saveCurrentScenario(): void {
+  const defaultName = `Scenario ${planningScenarios.length + 1}`;
+  const name = window.prompt('Save current planner and drawdown inputs as scenario:', defaultName)?.trim();
+  if (!name) return;
+
+  const existing = planningScenarios.find((scenario) => scenario.name.toLowerCase() === name.toLowerCase());
+  if (existing && !window.confirm(`Replace the existing scenario named "${existing.name}"?`)) return;
+
+  const nextScenario = captureCurrentScenario(name, existing);
+  planningScenarios = existing
+    ? planningScenarios.map((scenario) => scenario.id === existing.id ? nextScenario : scenario)
+    : [nextScenario, ...planningScenarios];
+  planningScenarios.sort((a, b) => b.updatedAt - a.updatedAt);
+  persistPlanningScenarios();
+  renderScenarioManager();
+  renderDrawdownScenarioBanner();
+}
+
+function loadPlanningScenario(id: string): void {
+  const scenario = planningScenarios.find((item) => item.id === id);
+  if (!scenario) return;
+  applyScenario(scenario, false);
+}
+
+function useScenarioForDrawdown(id: string): void {
+  const scenario = planningScenarios.find((item) => item.id === id);
+  if (!scenario) return;
+  applyScenario(scenario, true);
+}
+
+function deletePlanningScenario(id: string): void {
+  const scenario = planningScenarios.find((item) => item.id === id);
+  if (!scenario) return;
+  if (!window.confirm(`Delete the scenario "${scenario.name}"?`)) return;
+  planningScenarios = planningScenarios.filter((item) => item.id !== id);
+  if (activeDrawdownScenarioId === id) setActiveDrawdownScenario(null);
+  persistPlanningScenarios();
+  renderScenarioManager();
+  renderDrawdownScenarioBanner();
+}
+
 function renderPlanner(forceChart = false, syncRetirementAge = true): void {
   const result = getPlannerResult();
   if (syncRetirementAge) syncRetirementAgeDefault();
   renderPlannerPage(result, forceChart || $('pagePlanner').classList.contains('active'));
+  renderScenarioManager();
 }
 
 function renderRetirementPhase(): void {
@@ -2704,6 +3086,7 @@ function renderConversionOptimizer(): void {
 }
 
 function renderDrawdownPlan(): void {
+  renderDrawdownScenarioBanner();
   renderLifetimePlan('dp', false);
 }
 
@@ -3935,14 +4318,17 @@ function switchPage(page: AppPage): void {
 function exportBackup(event: Event): void {
   event.preventDefault();
   const data = {
-    version: 4,
+    version: 5,
     date: new Date().toISOString(),
     holdings,
     targets,
     yieldCache,
     age: readInt('currentAge', 50),
     retirementAge: readRetirementAge(),
-    plannerInputs: readPlannerInputs(),
+    plannerInputs: readPlannerInputSnapshot(),
+    drawdownInputs: readDrawdownInputSnapshot(),
+    planningScenarios,
+    activeDrawdownScenarioId,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -3982,7 +4368,7 @@ function importBackup(event: Event): void {
           }
           if (typeof data.plannerInputs.taxRateAuto === 'boolean') $('taxRateAuto').checked = data.plannerInputs.taxRateAuto;
           if (typeof data.plannerInputs.retireExpensesCustom === 'boolean') plannerRetireExpensesCustom = data.plannerInputs.retireExpensesCustom;
-          localStorage.setItem('fire_planner_inputs', JSON.stringify(data.plannerInputs));
+          localStorage.setItem(PLANNER_INPUTS_STORAGE_KEY, JSON.stringify(data.plannerInputs));
         } else if (data.age) {
           $('currentAge').value = String(data.age);
           persistPlannerInputs();
@@ -3990,6 +4376,21 @@ function importBackup(event: Event): void {
         if (data.retirementAge != null) {
           $('retirementAge').value = String(data.retirementAge);
           localStorage.setItem('fire_retirement_age', String(data.retirementAge));
+        }
+        if (data.drawdownInputs) {
+          localStorage.setItem(DRAWDOWN_INPUTS_STORAGE_KEY, JSON.stringify(data.drawdownInputs));
+        }
+        planningScenarios = Array.isArray(data.planningScenarios)
+          ? data.planningScenarios
+            .map(normalizePlanningScenario)
+            .filter((scenario): scenario is PlanningScenario => scenario !== null)
+          : [];
+        persistPlanningScenarios();
+        if (typeof data.activeDrawdownScenarioId === 'string'
+          && planningScenarios.some((scenario) => scenario.id === data.activeDrawdownScenarioId)) {
+          setActiveDrawdownScenario(data.activeDrawdownScenarioId);
+        } else {
+          setActiveDrawdownScenario(null);
         }
         persist();
         persistYieldCache();
@@ -4018,6 +4419,9 @@ function loadDemoPortfolio(event: Event): void {
   localStorage.removeItem('fire_user_age');
   localStorage.removeItem('fire_retirement_age');
   localStorage.removeItem('fire_base_income');
+  localStorage.removeItem(DRAWDOWN_INPUTS_STORAGE_KEY);
+  localStorage.removeItem(PLANNING_SCENARIOS_STORAGE_KEY);
+  localStorage.removeItem(ACTIVE_DRAWDOWN_SCENARIO_STORAGE_KEY);
   setHoldings(createDemoHoldings());
   setTargets({ ...DEFAULT_TARGETS });
   setYieldCache(createDemoYieldCache());
@@ -4029,6 +4433,8 @@ function loadDemoPortfolio(event: Event): void {
   editingSymbolTicker = null;
   lastRefreshReport = null;
   persistSymbolRefreshReport();
+  planningScenarios = [];
+  activeDrawdownScenarioId = null;
   resetCsvState();
   cbParsedRows = [];
   const plannerDefaults: Record<(typeof plannerInputIds)[number], string> = {
@@ -4058,9 +4464,11 @@ function loadDemoPortfolio(event: Event): void {
   syncRetireExpensesFromCurrent();
   syncHouseholdDefaults(true);
   $('retirementAge').value = '55';
+  applyDrawdownInputSnapshot(emptyDrawdownInputSnapshot());
   persist();
   persistYieldCache();
   persistPlannerInputs();
+  persistDrawdownInputs();
   localStorage.setItem('fire_retirement_age', '55');
   switchPage('planner');
   location.reload();
@@ -4084,8 +4492,13 @@ function attachStaticListeners(): void {
     $(id).addEventListener($(id).tagName === 'SELECT' ? 'change' : 'input', renderConversionOptimizer);
   });
 
-  ['dpLifeExp', 'dpSpending', 'dpSSIncome', 'dpTaxableReturn', 'dpIraReturn', 'dpRothReturn'].forEach((id) => {
-    $(id).addEventListener('input', renderDrawdownPlan);
+  drawdownInputIds.forEach((id) => {
+    $(id).addEventListener('input', () => {
+      persistDrawdownInputs();
+      clearActiveDrawdownScenario();
+      renderPlanner(false, false);
+      renderDrawdownPlan();
+    });
   });
 
   document.querySelectorAll('.modal-overlay').forEach((overlay) => {
@@ -4197,11 +4610,14 @@ function attachStaticListeners(): void {
 
   $('retirementAge').addEventListener('input', () => {
     localStorage.setItem('fire_retirement_age', $('retirementAge').value);
+    clearActiveDrawdownScenario();
     setRetirementAgeAutoUpdated(false);
+    renderPlanner(false, false);
     renderRetirementPhase();
   });
 
   $('taxRateAuto').addEventListener('change', () => {
+    clearActiveDrawdownScenario();
     updatePlannerTaxControls();
     persistPlannerInputs();
     renderAll(true);
@@ -4212,6 +4628,7 @@ function attachStaticListeners(): void {
       if (id === 'annualExpenses') syncRetireExpensesFromCurrent();
       if (id === 'retireExpenses') plannerRetireExpensesCustom = $('retireExpenses').value !== $('annualExpenses').value;
       if (id === 'filingStatus' && $('filingStatus').value === 'married' && readInt('householdSize', 1) < 2) $('householdSize').value = '2';
+      clearActiveDrawdownScenario();
       updatePlannerHouseholdVisibility();
       syncHouseholdDefaults();
       updatePlannerTaxControls();
@@ -4228,12 +4645,16 @@ attachGlobals();
 attachStaticListeners();
 
 hydratePlannerInputs();
+hydrateDrawdownInputs();
 const savedRetirementAge = localStorage.getItem('fire_retirement_age');
-if (savedRetirementAge) $('retirementAge').value = savedRetirementAge;
+if (savedRetirementAge) {
+  $('retirementAge').value = savedRetirementAge;
+  setRetirementAgeAutoUpdated(false);
+}
 updatePlannerHouseholdVisibility();
 syncRetireExpensesFromCurrent();
 syncHouseholdDefaults(true);
 updatePlannerTaxControls();
-syncRetirementAgeDefault();
+if (!savedRetirementAge) syncRetirementAgeDefault();
 
-renderAll();
+renderAll(!savedRetirementAge);
