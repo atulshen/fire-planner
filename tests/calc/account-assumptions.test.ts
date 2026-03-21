@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Holding } from '../../src/types';
-import { estimateAccountReturn, estimateAccountYield } from '../../src/calc/account-assumptions';
+import { estimateAccountReturn, estimateAccountYield, estimateHoldingsReturn } from '../../src/calc/account-assumptions';
 
 const makeHolding = (overrides: Partial<Holding>): Holding => ({
   ticker: 'VTI',
@@ -34,6 +34,27 @@ describe('estimateAccountReturn', () => {
     ];
     // VTMFX is modeled as 50% US stock, 50% muni
     expect(estimateAccountReturn(holdings, ['taxable'])).toBeCloseTo(5.0, 2);
+  });
+});
+
+describe('estimateHoldingsReturn', () => {
+  it('derives one invested return from the overall holdings mix regardless of account location', () => {
+    const holdings = [
+      makeHolding({ account: 'taxable', category: 'us_stock', shares: 30, price: 100 }),
+      makeHolding({ account: 'ira', category: 'bond', shares: 10, price: 100 }),
+    ];
+
+    expect(estimateHoldingsReturn(holdings)).toBeCloseTo((3000 * 7.0 + 1000 * 3.5) / 4000, 2);
+  });
+
+  it('lets callers exclude cash when they want an invested-only return estimate', () => {
+    const holdings = [
+      makeHolding({ account: 'taxable', category: 'cash', shares: 10, price: 100 }),
+      makeHolding({ account: 'ira', category: 'us_stock', shares: 10, price: 100 }),
+    ];
+
+    const investedOnly = holdings.filter((holding) => holding.category !== 'cash');
+    expect(estimateHoldingsReturn(investedOnly)).toBeCloseTo(7.0, 2);
   });
 });
 
