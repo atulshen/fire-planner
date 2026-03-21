@@ -151,7 +151,7 @@ const APP_HTML = `
           <input type="number" id="annualIncome" value="100000" step="1000">
         </div>
 
-        <div class="planner-row">
+        <div class="planner-row" id="plannerSpouseInfoRow">
           <div class="planner-field">
             <label for="spouseAge">Spouse Age</label>
             <input type="number" id="spouseAge" value="30" min="18" max="100">
@@ -193,7 +193,7 @@ const APP_HTML = `
           </div>
         </div>
 
-        <div class="planner-row">
+        <div class="planner-row" id="plannerSpouseSocialSecurityRow">
           <div class="planner-field">
             <label for="spouseSocialSecurityClaimAge">Spouse Claim Age</label>
             <select id="spouseSocialSecurityClaimAge">
@@ -950,6 +950,12 @@ function syncHouseholdDefaults(force = false): void {
   if (force || Number(dpInput.value) === lastAutoHouseholdSs) dpInput.value = String(combinedHouseholdSs);
   if (force || Number(coInput.value) === lastAutoHouseholdSs) coInput.value = String(combinedHouseholdSs);
   lastAutoHouseholdSs = combinedHouseholdSs;
+}
+
+function updatePlannerHouseholdVisibility(): void {
+  const showSpouseFields = readFilingStatus() === 'married' && readHouseholdSize() > 1;
+  $('plannerSpouseInfoRow').style.display = showSpouseFields ? '' : 'none';
+  $('plannerSpouseSocialSecurityRow').style.display = showSpouseFields ? '' : 'none';
 }
 
 function syncRetireExpensesFromCurrent(): void {
@@ -4206,6 +4212,7 @@ function attachStaticListeners(): void {
       if (id === 'annualExpenses') syncRetireExpensesFromCurrent();
       if (id === 'retireExpenses') plannerRetireExpensesCustom = $('retireExpenses').value !== $('annualExpenses').value;
       if (id === 'filingStatus' && $('filingStatus').value === 'married' && readInt('householdSize', 1) < 2) $('householdSize').value = '2';
+      updatePlannerHouseholdVisibility();
       syncHouseholdDefaults();
       updatePlannerTaxControls();
       persistPlannerInputs();
@@ -4223,6 +4230,7 @@ attachStaticListeners();
 hydratePlannerInputs();
 const savedRetirementAge = localStorage.getItem('fire_retirement_age');
 if (savedRetirementAge) $('retirementAge').value = savedRetirementAge;
+updatePlannerHouseholdVisibility();
 syncRetireExpensesFromCurrent();
 syncHouseholdDefaults(true);
 updatePlannerTaxControls();
