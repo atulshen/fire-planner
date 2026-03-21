@@ -2401,7 +2401,7 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
       taxableCash = Math.max(taxableCash, 0) * (1 + taxableCashGrowth);
       taxableInvested = Math.max(taxableInvested, 0) * (1 + taxableInvestedGrowth);
       taxableCostBasis = Math.max(taxableCostBasis, 0) * (1 + taxableInvestedGrowth * 0.3);
-      roth = rothExisting + rothConverted;
+      const roth = rothExisting + rothConverted;
       const endingTaxable = taxableCash + taxableInvested;
 
       years.push({
