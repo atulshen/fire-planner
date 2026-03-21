@@ -47,7 +47,7 @@ import { simulateDrawdown, getRmdFactor } from './calc/drawdown';
 import { guessAccountType, guessCategory } from './calc/category';
 import { calculateFirePlan } from './calc/fire';
 import { renderPlannerPage } from './render/planner';
-import { estimateAccountReturn, estimateAccountYield } from './calc/account-assumptions';
+import { estimateAccountReturn, estimateAccountYield, estimateHoldingsReturn } from './calc/account-assumptions';
 import {
   buildDealchartsQueries,
   emptySymbolLookupResult,
@@ -1859,23 +1859,21 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
   const convEndAge = 72;
   const taxableCashHoldings = holdings.filter((holding) => holding.account === 'taxable' && holding.category === 'cash');
   const taxableInvestedHoldings = holdings.filter((holding) => holding.account === 'taxable' && holding.category !== 'cash');
-  const estimatedTaxableGrowthPct = estimateAccountReturn(holdings, ['taxable'], yieldCache);
-  const estimatedIraGrowthPct = estimateAccountReturn(holdings, ['ira'], yieldCache);
-  const estimatedRothGrowthPct = estimateAccountReturn(holdings, ['roth', 'hsa'], yieldCache);
+  const investedHoldings = holdings.filter((holding) => holding.category !== 'cash');
+  const estimatedInvestedGrowthPct = investedHoldings.length > 0
+    ? estimateHoldingsReturn(investedHoldings, yieldCache)
+    : 0;
   const estimatedTaxableCashGrowthPct = taxableCashHoldings.length > 0
     ? estimateAccountReturn(taxableCashHoldings, ['taxable'], yieldCache)
-    : estimatedTaxableGrowthPct;
-  const estimatedTaxableInvestedGrowthPct = taxableInvestedHoldings.length > 0
-    ? estimateAccountReturn(taxableInvestedHoldings, ['taxable'], yieldCache)
-    : estimatedTaxableGrowthPct;
+    : estimatedInvestedGrowthPct;
   const taxableReturnOverride = $(`${prefix}TaxableReturn`).value.trim();
   const iraReturnOverride = $(`${prefix}IraReturn`).value.trim();
   const rothReturnOverride = $(`${prefix}RothReturn`).value.trim();
-  const taxableGrowthPct = readFloat(`${prefix}TaxableReturn`, estimatedTaxableGrowthPct);
-  const iraGrowthPct = readFloat(`${prefix}IraReturn`, estimatedIraGrowthPct);
-  const rothGrowthPct = readFloat(`${prefix}RothReturn`, estimatedRothGrowthPct);
+  const taxableGrowthPct = readFloat(`${prefix}TaxableReturn`, estimatedInvestedGrowthPct);
+  const iraGrowthPct = readFloat(`${prefix}IraReturn`, estimatedInvestedGrowthPct);
+  const rothGrowthPct = readFloat(`${prefix}RothReturn`, estimatedInvestedGrowthPct);
   const taxableCashGrowthPct = taxableReturnOverride ? taxableGrowthPct : estimatedTaxableCashGrowthPct;
-  const taxableInvestedGrowthPct = taxableReturnOverride ? taxableGrowthPct : estimatedTaxableInvestedGrowthPct;
+  const taxableInvestedGrowthPct = taxableReturnOverride ? taxableGrowthPct : estimatedInvestedGrowthPct;
   const taxableCashGrowth = taxableCashGrowthPct / 100;
   const taxableInvestedGrowth = taxableInvestedGrowthPct / 100;
   const iraGrowth = iraGrowthPct / 100;
@@ -1887,9 +1885,9 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
     ? estimateAccountYield(taxableInvestedHoldings, ['taxable'], getHoldingYield) / 100
     : 0;
 
-  ($(`${prefix}TaxableReturn`) as HTMLInputElement).placeholder = fmtD(estimatedTaxableGrowthPct, 1);
-  ($(`${prefix}IraReturn`) as HTMLInputElement).placeholder = fmtD(estimatedIraGrowthPct, 1);
-  ($(`${prefix}RothReturn`) as HTMLInputElement).placeholder = fmtD(estimatedRothGrowthPct, 1);
+  ($(`${prefix}TaxableReturn`) as HTMLInputElement).placeholder = fmtD(estimatedInvestedGrowthPct, 1);
+  ($(`${prefix}IraReturn`) as HTMLInputElement).placeholder = fmtD(estimatedInvestedGrowthPct, 1);
+  ($(`${prefix}RothReturn`) as HTMLInputElement).placeholder = fmtD(estimatedInvestedGrowthPct, 1);
 
   if (holdings.length === 0) {
     $(`${prefix}Assumptions`).innerHTML = '';
@@ -1898,12 +1896,12 @@ function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void
   }
 
   if (allowConversion && iraBalance <= 0) {
-    $(`${prefix}Assumptions`).textContent = `Using holdings-based assumptions. Annual returns used: Taxable ${fmtD(taxableGrowthPct, 1)}%${taxableReturnOverride ? ` (manual; estimate ${fmtD(estimatedTaxableGrowthPct, 1)}%)` : ''}, IRA ${fmtD(iraGrowthPct, 1)}%${iraReturnOverride ? ` (manual; estimate ${fmtD(estimatedIraGrowthPct, 1)}%)` : ''}, Roth/HSA ${fmtD(rothGrowthPct, 1)}%${rothReturnOverride ? ` (manual; estimate ${fmtD(estimatedRothGrowthPct, 1)}%)` : ''}.`;
+    $(`${prefix}Assumptions`).textContent = `Using holdings-based assumptions. Default invested return is ${fmtD(estimatedInvestedGrowthPct, 1)}% across taxable invested assets, IRA, and Roth/HSA to reflect a rebalanced overall portfolio mix${taxableReturnOverride || iraReturnOverride || rothReturnOverride ? '; manual overrides replace that shared default where entered' : ''}. Taxable cash uses ${fmtD(estimatedTaxableCashGrowthPct, 1)}% unless the taxable override is set.`;
     $(`${prefix}Results`).innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">No Traditional IRA holdings found.</div><div class="co-optimal-sub">Add or import Traditional IRA holdings to compare conversion scenarios.</div></div>';
     return;
   }
 
-  $(`${prefix}Assumptions`).textContent = `Using current holdings automatically. Retirement earned income is assumed to be $0. Annual returns used: Taxable invested ${fmtD(taxableGrowthPct, 1)}%${taxableReturnOverride ? ` (manual; estimate ${fmtD(estimatedTaxableGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, taxable cash ${fmtD(taxableCashGrowthPct, 1)}%${taxableReturnOverride ? ' (matching manual taxable override)' : ' (cash estimate)'}, IRA ${fmtD(iraGrowthPct, 1)}%${iraReturnOverride ? ` (manual; estimate ${fmtD(estimatedIraGrowthPct, 1)}%)` : ' (holdings mix estimate)'}, Roth/HSA ${fmtD(rothGrowthPct, 1)}%${rothReturnOverride ? ` (manual; estimate ${fmtD(estimatedRothGrowthPct, 1)}%)` : ' (holdings mix estimate)'}. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies for a household of ${householdSize} with a 50% load and ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA. Taxable cash is spent before selling appreciated taxable assets.${allowConversion ? '' : ' Roth conversions are disabled in this view.'}`;
+  $(`${prefix}Assumptions`).textContent = `Using current holdings automatically. Retirement earned income is assumed to be $0. Default invested return is ${fmtD(estimatedInvestedGrowthPct, 1)}% across taxable invested assets, IRA, and Roth/HSA so the simulation reflects a rebalanced overall portfolio mix. Taxable invested uses ${fmtD(taxableGrowthPct, 1)}%${taxableReturnOverride ? ` (manual; shared estimate ${fmtD(estimatedInvestedGrowthPct, 1)}%)` : ' (shared portfolio estimate)'}, taxable cash uses ${fmtD(taxableCashGrowthPct, 1)}%${taxableReturnOverride ? ' (matching manual taxable override)' : ' (cash estimate)'}, IRA uses ${fmtD(iraGrowthPct, 1)}%${iraReturnOverride ? ` (manual; shared estimate ${fmtD(estimatedInvestedGrowthPct, 1)}%)` : ' (shared portfolio estimate)'}, and Roth/HSA uses ${fmtD(rothGrowthPct, 1)}%${rothReturnOverride ? ` (manual; shared estimate ${fmtD(estimatedInvestedGrowthPct, 1)}%)` : ' (shared portfolio estimate)'}. Base spending is inflated by ${fmtD(inflation * 100, 1)}% per year. Pre-65 healthcare uses ACA Gold premiums net of subsidies for a household of ${householdSize} with a 50% load and ${fmtD(healthcareInflation * 100, 1)}% healthcare inflation, and 65+ uses the Medicare model for premiums, out-of-pocket, and IRMAA. Taxable cash is spent before selling appreciated taxable assets.${allowConversion ? '' : ' Roth conversions are disabled in this view.'}`;
 
   if (startAge >= lifeExp) {
     $(`${prefix}Results`).innerHTML = '<div class="co-optimal-callout neutral"><div class="co-optimal-title">Life expectancy must be greater than current age.</div></div>';
