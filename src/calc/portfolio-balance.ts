@@ -11,6 +11,13 @@ export interface HoldingBalances {
   hsa: number;
 }
 
+export interface PlannerFundingSource {
+  holdingsNetWorth: number;
+  otherAssetsAdjustment: number;
+  liabilitiesAdjustment: number;
+  startingNetWorth: number;
+}
+
 export function getHoldingBalances(holdings: Holding[]): HoldingBalances {
   let taxable = 0;
   let taxableBasis = 0;
@@ -54,7 +61,17 @@ export function getPortfolioNetWorth(holdings: Holding[]): number {
   return getPortfolioNetWorthFromBalances(getHoldingBalances(holdings));
 }
 
-export function resolvePlannerStartingNetWorth(holdings: Holding[], manualNetWorth: number): number {
+export function calculatePlannerFundingSource(
+  holdings: Holding[],
+  otherAssetsAdjustment = 0,
+  liabilitiesAdjustment = 0,
+): PlannerFundingSource {
   const holdingsNetWorth = getPortfolioNetWorth(holdings);
-  return holdings.length > 0 && holdingsNetWorth > 0 ? holdingsNetWorth : manualNetWorth;
+  const normalizedLiabilitiesAdjustment = Math.max(liabilitiesAdjustment, 0);
+  return {
+    holdingsNetWorth,
+    otherAssetsAdjustment,
+    liabilitiesAdjustment: normalizedLiabilitiesAdjustment,
+    startingNetWorth: holdingsNetWorth + otherAssetsAdjustment - normalizedLiabilitiesAdjustment,
+  };
 }

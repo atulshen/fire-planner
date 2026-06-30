@@ -90,7 +90,7 @@ export function calculateFirePlan(inputs: FirePlannerInputs): FirePlannerResult 
   const annualIncome = Math.max(inputs.annualIncome || 0, 0);
   const spouseAnnualIncome = filingStatus === 'married' ? Math.max(inputs.spouseAnnualIncome || 0, 0) : 0;
   const annualExpenses = Math.max(inputs.annualExpenses || 0, 0);
-  const currentSavings = Math.max(inputs.currentSavings || 0, 0);
+  const currentSavings = Number.isFinite(inputs.currentSavings) ? (inputs.currentSavings as number) : 0;
   const returnRate = Math.max(inputs.returnRate || 0, 0) / 100;
   const inflationRate = Math.max(inputs.inflationRate || 0, 0) / 100;
   const withdrawalRate = Math.max(inputs.withdrawalRate || 0, 0.01) / 100;

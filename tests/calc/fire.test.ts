@@ -126,6 +126,25 @@ describe('calculateFirePlan', () => {
     expect(result.netWorths[3]).toBe(165500);
   });
 
+  it('preserves negative starting net worth when liabilities exceed assets', () => {
+    const result = calculateFirePlan({
+      currentAge: 30,
+      annualIncome: 100000,
+      annualExpenses: 50000,
+      currentSavings: -25000,
+      returnRate: 0,
+      inflationRate: 0,
+      withdrawalRate: 4,
+      taxRate: 0,
+      retireExpenses: 1000000,
+      longevityAge: 95,
+    });
+
+    expect(result.currentSavings).toBe(-25000);
+    expect(result.netWorths[0]).toBe(-25000);
+    expect(result.netWorths[1]).toBe(25000);
+  });
+
   it('reduces the required retirement target when Social Security is modeled', () => {
     const withoutSs = calculateFirePlan({
       currentAge: 40,
