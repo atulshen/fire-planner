@@ -3,6 +3,7 @@ import { RMD_TABLE } from '../constants/tax';
 export interface DrawdownParams {
   currentAge: number;
   retireAge: number;
+  endAge?: number;
   expenses: number;
   inflation: number;
   returnRate: number;
@@ -64,7 +65,7 @@ export function getRmdFactor(age: number): number {
  */
 export function simulateDrawdown(params: DrawdownParams): DrawdownSimResult {
   const {
-    currentAge, retireAge, expenses, inflation, returnRate: growth,
+    currentAge, retireAge, endAge, expenses, inflation, returnRate: growth,
     taxRate: ordTax, ltcgRate: ltcgTax, ssAnnual,
     iraBalance, rothBalance, taxableBalance, taxableCostBasis,
   } = params;
@@ -77,7 +78,7 @@ export function simulateDrawdown(params: DrawdownParams): DrawdownSimResult {
   let roth = rothBalance * Math.pow(1 + growth, yearsToRetire);
 
   const years: DrawdownYearResult[] = [];
-  const maxYears = 50;
+  const maxYears = endAge != null ? Math.max(endAge - retireAge + 1, 1) : 50;
   let age = retireAge;
 
   for (let y = 0; y < maxYears; y++) {

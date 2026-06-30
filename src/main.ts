@@ -40,6 +40,7 @@ import { calcAcaSubsidy, calcAcaSubsidyForYear, estimateBenchmarkPremium, estima
 import { calcFederalIncomeTax, calcPayrollTax, calcProgressiveTax, calcTaxableSocialSecurity, getTopOfOrdinaryBracketGrossIncome } from './calc/tax';
 import { recommendRothConversion } from './calc/conversion';
 import { getIrmaaSurcharge, getMedicareAnnualCost } from './calc/medicare';
+import { evaluatePlannerConsistency } from './calc/planner-consistency';
 import { ACA_FPL_ADDITIONAL_PERSON_BASELINE, ACA_FPL_BASELINE, ACA_PLANNING_BASELINE_LABEL } from './constants/aca';
 import { IRMAA_BRACKETS, MEDICARE_PLANNING_BASELINE_LABEL } from './constants/medicare';
 import { PLANNING_GROWTH_RATES } from './constants/planning';
@@ -288,6 +289,7 @@ const APP_HTML = `
         <div class="panel">
           <h2>Retirement Age Calculator</h2>
           <div id="plannerStatusBadge"></div>
+          <div id="plannerConsistencyArea"></div>
           <div class="planner-results-grid" id="plannerResultsGrid"></div>
 
           <div class="planner-chart-container">
@@ -1559,12 +1561,56 @@ function deletePlanningScenario(id: string): void {
   renderDrawdownScenarioBanner();
 }
 
+function getPlannerConsistencyResult(plannerResult: ReturnType<typeof getPlannerResult>) {
+  const balances = getHoldingBalances(holdings);
+  const currentAge = readInt('currentAge', 30);
+  const retireAge = readRetirementAge();
+  const lifeExp = readInt('dpLifeExp', 90);
+  const spending = readFloat('dpSpending', 50000);
+  const ssIncome = readFloat('dpSSIncome', 0);
+  const inflation = readFloat('inflationRate', 3) / 100;
+  const yearsFromStart = Math.max(retireAge - currentAge, 0);
+  const withdrawalProxyIncome = Math.max(spending - ssIncome, 0);
+  const ordinaryTaxRate = calcFederalIncomeTax(withdrawalProxyIncome, 0, yearsFromStart, inflation).effectiveRate;
+  const ltcgTaxRate = calcFederalIncomeTax(0, withdrawalProxyIncome, yearsFromStart, inflation).effectiveRate;
+  const drawdown = simulateDrawdown({
+    currentAge,
+    retireAge,
+    endAge: lifeExp,
+    expenses: spending,
+    inflation,
+    returnRate: readFloat('returnRate', 7) / 100,
+    taxRate: ordinaryTaxRate,
+    ltcgRate: ltcgTaxRate,
+    ssAnnual: ssIncome,
+    iraBalance: balances.ira,
+    rothBalance: balances.roth + balances.hsa,
+    taxableBalance: balances.taxable,
+    taxableCostBasis: balances.taxableBasis,
+  });
+
+  return evaluatePlannerConsistency({
+    plannerFireAge: plannerResult.fireAge,
+    selectedRetirementAge: retireAge,
+    plannerRetireExpenses: readFloat('retireExpenses', 40000),
+    plannerLongevityAge: readInt('longevityAge', 95),
+    drawdownSpending: spending,
+    drawdownLifeExp: lifeExp,
+    drawdownDepletionAge: drawdown.depletionAge,
+    drawdownFinalBalance: drawdown.finalBalance,
+    otherAssetsAdjustment: readFloat('otherAssetsAdjustment', 0),
+    liabilitiesAdjustment: readFloat('liabilitiesAdjustment', 0),
+    portfolioContext: getPlannerPortfolioContext(holdings),
+  });
+}
+
 function renderPlanner(forceChart = false, syncRetirementAge = true): void {
   updatePlannerFundingSourceControls();
   const result = getPlannerResult();
   const portfolioContext = getPlannerPortfolioContext(holdings);
   if (syncRetirementAge) syncRetirementAgeDefault();
-  renderPlannerPage(result, forceChart || $('pagePlanner').classList.contains('active'), portfolioContext);
+  const consistency = getPlannerConsistencyResult(result);
+  renderPlannerPage(result, forceChart || $('pagePlanner').classList.contains('active'), portfolioContext, consistency);
   renderScenarioManager();
 }
 
