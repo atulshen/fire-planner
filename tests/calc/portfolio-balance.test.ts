@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   calculatePlannerFundingSource,
   getHoldingBalances,
+  getPlannerPortfolioContext,
   getPortfolioNetWorth,
   getPortfolioNetWorthFromBalances,
 } from '../../src/calc/portfolio-balance';
@@ -43,5 +44,17 @@ describe('portfolio-balance helpers', () => {
     expect(funding.otherAssetsAdjustment).toBe(50000);
     expect(funding.liabilitiesAdjustment).toBe(10000);
     expect(funding.startingNetWorth).toBe(68500);
+  });
+
+  it('builds an account-aware planner portfolio context from holdings', () => {
+    const context = getPlannerPortfolioContext(holdings);
+
+    expect(context.totalNetWorth).toBe(28500);
+    expect(context.taxableInvested).toBe(15000);
+    expect(context.taxableCash).toBe(1000);
+    expect(context.ira).toBe(7200);
+    expect(context.rothHsa).toBe(5300);
+    expect(context.investedAssets).toBe(27500);
+    expect(context.cashLikeAssets).toBe(1000);
   });
 });

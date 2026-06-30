@@ -1,6 +1,7 @@
 import { $ } from '../utils/dom';
 import { fmt, fmtK } from '../utils/format';
 import type { FirePlannerResult } from '../calc/fire';
+import type { PlannerPortfolioContext } from '../calc/portfolio-balance';
 
 function drawPlannerChart(result: FirePlannerResult): void {
   const canvas = document.getElementById('plannerProjectionChart') as HTMLCanvasElement | null;
@@ -113,7 +114,11 @@ function drawPlannerChart(result: FirePlannerResult): void {
   ctx.stroke();
 }
 
-export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: boolean): void {
+export function renderPlannerPage(
+  result: FirePlannerResult,
+  shouldDrawChart: boolean,
+  portfolioContext: PlannerPortfolioContext,
+): void {
   const statusMap = {
     on_track: { className: 'on-track' },
     close: { className: 'behind' },
@@ -187,6 +192,37 @@ export function renderPlannerPage(result: FirePlannerResult, shouldDrawChart: bo
       <span class="planner-milestone-desc">${milestone.target === 'FIRE' ? 'Retirement ready' : milestone.target === 'SS' ? 'Social Security starts' : `$${fmtK(milestone.target)} net worth`}</span>
     </li>
   `).join('');
+
+  const totalNetWorth = portfolioContext.totalNetWorth;
+  const shareOf = (amount: number) => totalNetWorth > 0 ? Math.round((amount / totalNetWorth) * 100) : 0;
+  $('plannerPortfolioContext').innerHTML = totalNetWorth > 0
+    ? `
+      <div class="planner-results-grid" style="margin-bottom:0;">
+        <div class="stat blue">
+          <div class="label">Taxable Invested</div>
+          <div class="value">$${fmtK(portfolioContext.taxableInvested)}</div>
+          <div class="sub">${shareOf(portfolioContext.taxableInvested)}% of starting portfolio</div>
+        </div>
+        <div class="stat blue">
+          <div class="label">Taxable Cash</div>
+          <div class="value">$${fmtK(portfolioContext.taxableCash)}</div>
+          <div class="sub">${shareOf(portfolioContext.taxableCash)}% cash-like assets</div>
+        </div>
+        <div class="stat blue">
+          <div class="label">Traditional IRA</div>
+          <div class="value">$${fmtK(portfolioContext.ira)}</div>
+          <div class="sub">${shareOf(portfolioContext.ira)}% tax-deferred</div>
+        </div>
+        <div class="stat blue">
+          <div class="label">Roth + HSA</div>
+          <div class="value">$${fmtK(portfolioContext.rothHsa)}</div>
+          <div class="sub">${shareOf(portfolioContext.rothHsa)}% tax-free accounts</div>
+        </div>
+      </div>
+      <div class="planner-hint" style="margin-top:0.75rem;">
+        Planner starting capital is sourced from the same account-aware holdings data used by drawdown and Roth conversion simulations.
+      </div>`
+    : '<div class="planner-hint">No holdings loaded yet. Portfolio mix will appear here once holdings are added or imported.</div>';
 
   if (shouldDrawChart) drawPlannerChart(result);
 }
