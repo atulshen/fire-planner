@@ -56,7 +56,7 @@ import {
   estimateAccountYieldFromBalances,
   rebalanceInvestedAccounts,
 } from './calc/rebalance';
-import { calculatePlannerFundingSource, getHoldingBalances } from './calc/portfolio-balance';
+import { calculatePlannerFundingSource, getHoldingBalances, getPlannerPortfolioContext } from './calc/portfolio-balance';
 import {
   buildDealchartsQueries,
   emptySymbolLookupResult,
@@ -305,6 +305,11 @@ const APP_HTML = `
               <h3 class="planner-subheading">Milestones</h3>
               <ul class="planner-milestone-list" id="plannerMilestoneList"></ul>
             </div>
+          </div>
+
+          <div class="planner-chart-container" style="margin-top:1.25rem;margin-bottom:0;">
+            <h3>Starting Portfolio Mix</h3>
+            <div id="plannerPortfolioContext"></div>
           </div>
         </div>
 
@@ -1557,8 +1562,9 @@ function deletePlanningScenario(id: string): void {
 function renderPlanner(forceChart = false, syncRetirementAge = true): void {
   updatePlannerFundingSourceControls();
   const result = getPlannerResult();
+  const portfolioContext = getPlannerPortfolioContext(holdings);
   if (syncRetirementAge) syncRetirementAgeDefault();
-  renderPlannerPage(result, forceChart || $('pagePlanner').classList.contains('active'));
+  renderPlannerPage(result, forceChart || $('pagePlanner').classList.contains('active'), portfolioContext);
   renderScenarioManager();
 }
 

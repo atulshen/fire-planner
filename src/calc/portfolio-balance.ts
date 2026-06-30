@@ -18,6 +18,16 @@ export interface PlannerFundingSource {
   startingNetWorth: number;
 }
 
+export interface PlannerPortfolioContext {
+  totalNetWorth: number;
+  taxableInvested: number;
+  taxableCash: number;
+  ira: number;
+  rothHsa: number;
+  investedAssets: number;
+  cashLikeAssets: number;
+}
+
 export function getHoldingBalances(holdings: Holding[]): HoldingBalances {
   let taxable = 0;
   let taxableBasis = 0;
@@ -73,5 +83,21 @@ export function calculatePlannerFundingSource(
     otherAssetsAdjustment,
     liabilitiesAdjustment: normalizedLiabilitiesAdjustment,
     startingNetWorth: holdingsNetWorth + otherAssetsAdjustment - normalizedLiabilitiesAdjustment,
+  };
+}
+
+export function getPlannerPortfolioContext(holdings: Holding[]): PlannerPortfolioContext {
+  const balances = getHoldingBalances(holdings);
+  const rothHsa = balances.roth + balances.hsa;
+  const totalNetWorth = balances.taxable + balances.ira + rothHsa;
+  const investedAssets = balances.taxableInvested + balances.ira + rothHsa;
+  return {
+    totalNetWorth,
+    taxableInvested: balances.taxableInvested,
+    taxableCash: balances.taxableCash,
+    ira: balances.ira,
+    rothHsa,
+    investedAssets,
+    cashLikeAssets: balances.taxableCash,
   };
 }
