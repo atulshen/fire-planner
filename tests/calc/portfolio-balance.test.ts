@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  calculatePlannerFundingSource,
   getHoldingBalances,
   getPortfolioNetWorth,
   getPortfolioNetWorthFromBalances,
-  resolvePlannerStartingNetWorth,
 } from '../../src/calc/portfolio-balance';
 import type { Holding } from '../../src/types';
 
@@ -36,8 +36,12 @@ describe('portfolio-balance helpers', () => {
     expect(getPortfolioNetWorth(holdings)).toBe(28500);
   });
 
-  it('uses holdings for planner starting net worth when holdings exist, otherwise falls back to manual net worth', () => {
-    expect(resolvePlannerStartingNetWorth(holdings, 123456)).toBe(28500);
-    expect(resolvePlannerStartingNetWorth([], 123456)).toBe(123456);
+  it('reconciles holdings, outside assets, and liabilities into planner starting net worth', () => {
+    const funding = calculatePlannerFundingSource(holdings, 50000, 10000);
+
+    expect(funding.holdingsNetWorth).toBe(28500);
+    expect(funding.otherAssetsAdjustment).toBe(50000);
+    expect(funding.liabilitiesAdjustment).toBe(10000);
+    expect(funding.startingNetWorth).toBe(68500);
   });
 });

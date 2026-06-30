@@ -56,7 +56,7 @@ import {
   estimateAccountYieldFromBalances,
   rebalanceInvestedAccounts,
 } from './calc/rebalance';
-import { getHoldingBalances, getPortfolioNetWorth, resolvePlannerStartingNetWorth } from './calc/portfolio-balance';
+import { calculatePlannerFundingSource, getHoldingBalances } from './calc/portfolio-balance';
 import {
   buildDealchartsQueries,
   emptySymbolLookupResult,
@@ -174,11 +174,32 @@ const APP_HTML = `
           <div class="planner-hint">Your current yearly spending in today's dollars</div>
         </div>
 
-        <div class="planner-field">
-          <label for="currentSavings" id="currentSavingsLabel">Current Net Worth</label>
-          <input type="number" id="currentSavings" value="50000" step="1000">
-          <div class="planner-hint" id="currentSavingsHint">Enter your current investable net worth.</div>
+        <div class="planner-row">
+          <div class="planner-field">
+            <label for="portfolioNetWorth">Portfolio Holdings Net Worth</label>
+            <input type="number" id="portfolioNetWorth" value="0" step="1000" readonly>
+            <div class="planner-hint">Derived automatically from imported holdings tracked in this app.</div>
+          </div>
+          <div class="planner-field">
+            <label for="otherAssetsAdjustment">Other Assets Adjustment</label>
+            <input type="number" id="otherAssetsAdjustment" value="0" step="1000">
+            <div class="planner-hint">Add outside assets not represented in your holdings, such as home equity allocated to retirement or private investments.</div>
+          </div>
         </div>
+
+        <div class="planner-row">
+          <div class="planner-field">
+            <label for="liabilitiesAdjustment">Liabilities Adjustment</label>
+            <input type="number" id="liabilitiesAdjustment" value="0" step="1000" min="0">
+            <div class="planner-hint">Subtract debts or obligations that should reduce the planner starting balance.</div>
+          </div>
+          <div class="planner-field">
+            <label for="currentSavings" id="currentSavingsLabel">Planner Starting Net Worth</label>
+            <input type="number" id="currentSavings" value="50000" step="1000" readonly>
+            <div class="planner-hint" id="currentSavingsHint">Portfolio holdings plus other assets minus liabilities.</div>
+          </div>
+        </div>
+        <div class="planner-hint" id="plannerFundingReconciliation" style="margin-top:-0.25rem;margin-bottom:1rem;"></div>
 
         <div class="planner-row">
           <div class="planner-field">
@@ -830,6 +851,8 @@ const plannerInputIds = [
   'spouseRetirementAge',
   'annualIncome',
   'annualExpenses',
+  'otherAssetsAdjustment',
+  'liabilitiesAdjustment',
   'currentSavings',
   'returnRate',
   'inflationRate',
@@ -953,6 +976,8 @@ function emptyPlannerInputSnapshot(): PlannerInputSnapshot {
     spouseRetirementAge: '67',
     annualIncome: '100000',
     annualExpenses: '40000',
+    otherAssetsAdjustment: '0',
+    liabilitiesAdjustment: '0',
     currentSavings: '50000',
     returnRate: '7',
     inflationRate: '3',
@@ -1101,25 +1126,28 @@ function syncRetireExpensesFromCurrent(): void {
 }
 
 function updatePlannerFundingSourceControls(): void {
+  const portfolioInput = $('portfolioNetWorth') as HTMLInputElement;
   const savingsInput = $('currentSavings') as HTMLInputElement;
   const savingsLabel = $('currentSavingsLabel');
   const savingsHint = $('currentSavingsHint');
-  const holdingsNetWorth = getPortfolioNetWorth(holdings);
-  const hasImportedHoldings = holdings.length > 0 && holdingsNetWorth > 0;
+  const reconciliation = $('plannerFundingReconciliation');
+  const funding = calculatePlannerFundingSource(
+    holdings,
+    readFloat('otherAssetsAdjustment', 0),
+    readFloat('liabilitiesAdjustment', 0),
+  );
 
-  if (hasImportedHoldings) {
-    savingsLabel.textContent = 'Portfolio Net Worth (from holdings)';
-    savingsInput.value = String(Math.round(holdingsNetWorth));
-    savingsInput.readOnly = true;
-    savingsInput.setAttribute('aria-readonly', 'true');
-    savingsHint.textContent = 'Derived automatically from your imported holdings. Add planner adjustments in the next step if you need to include assets outside this portfolio.';
-    return;
-  }
-
-  savingsLabel.textContent = 'Current Net Worth';
-  savingsInput.readOnly = false;
-  savingsInput.removeAttribute('aria-readonly');
-  savingsHint.textContent = 'Enter your current investable net worth.';
+  portfolioInput.value = String(Math.round(funding.holdingsNetWorth));
+  savingsLabel.textContent = 'Planner Starting Net Worth';
+  savingsInput.value = String(Math.round(funding.startingNetWorth));
+  savingsInput.setAttribute('aria-readonly', 'true');
+  savingsHint.textContent = 'Portfolio holdings plus other assets minus liabilities.';
+  savingsInput.readOnly = true;
+  reconciliation.innerHTML = `
+    Portfolio holdings $${fmt(Math.round(funding.holdingsNetWorth))}
+    ${funding.otherAssetsAdjustment !== 0 ? ` + other assets $${fmt(Math.round(funding.otherAssetsAdjustment))}` : ' + other assets $0'}
+    ${funding.liabilitiesAdjustment !== 0 ? ` - liabilities $${fmt(Math.round(funding.liabilitiesAdjustment))}` : ' - liabilities $0'}
+    = planner starting net worth <strong>$${fmt(Math.round(funding.startingNetWorth))}</strong>.`;
 }
 
 function attachGlobals(): void {
@@ -1172,7 +1200,11 @@ function renderPortfolio(): void {
 }
 
 function readPlannerInputs() {
-  const plannerStartingNetWorth = resolvePlannerStartingNetWorth(holdings, readFloat('currentSavings', 50000));
+  const funding = calculatePlannerFundingSource(
+    holdings,
+    readFloat('otherAssetsAdjustment', 0),
+    readFloat('liabilitiesAdjustment', 0),
+  );
   return {
     currentAge: readInt('currentAge', 30),
     filingStatus: readFilingStatus(),
@@ -1182,7 +1214,7 @@ function readPlannerInputs() {
     spouseRetirementAge: readInt('spouseRetirementAge', readInt('spouseAge', readInt('currentAge', 30))),
     annualIncome: readFloat('annualIncome', 100000),
     annualExpenses: readFloat('annualExpenses', 40000),
-    currentSavings: plannerStartingNetWorth,
+    currentSavings: funding.startingNetWorth,
     returnRate: readFloat('returnRate', 7),
     inflationRate: readFloat('inflationRate', 3),
     withdrawalRate: readFloat('withdrawalRate', 4),
@@ -1232,6 +1264,7 @@ function applyDrawdownInputSnapshot(snapshot: Partial<DrawdownInputSnapshot>): v
 }
 
 function persistPlannerInputs(): void {
+  updatePlannerFundingSourceControls();
   localStorage.setItem(PLANNER_INPUTS_STORAGE_KEY, JSON.stringify(readPlannerInputSnapshot()));
 }
 
@@ -4429,6 +4462,8 @@ function loadDemoPortfolio(event: Event): void {
     spouseRetirementAge: '67',
     annualIncome: '100000',
     annualExpenses: '40000',
+    otherAssetsAdjustment: '0',
+    liabilitiesAdjustment: '0',
     currentSavings: '250000',
     returnRate: '7',
     inflationRate: '3',
