@@ -56,6 +56,7 @@ import {
   estimateAccountYieldFromBalances,
   rebalanceInvestedAccounts,
 } from './calc/rebalance';
+import { getHoldingBalances, getPortfolioNetWorth, resolvePlannerStartingNetWorth } from './calc/portfolio-balance';
 import {
   buildDealchartsQueries,
   emptySymbolLookupResult,
@@ -174,8 +175,9 @@ const APP_HTML = `
         </div>
 
         <div class="planner-field">
-          <label for="currentSavings">Current Net Worth</label>
+          <label for="currentSavings" id="currentSavingsLabel">Current Net Worth</label>
           <input type="number" id="currentSavings" value="50000" step="1000">
+          <div class="planner-hint" id="currentSavingsHint">Enter your current investable net worth.</div>
         </div>
 
         <div class="planner-row">
@@ -1098,6 +1100,28 @@ function syncRetireExpensesFromCurrent(): void {
   $('retireExpenses').value = $('annualExpenses').value;
 }
 
+function updatePlannerFundingSourceControls(): void {
+  const savingsInput = $('currentSavings') as HTMLInputElement;
+  const savingsLabel = $('currentSavingsLabel');
+  const savingsHint = $('currentSavingsHint');
+  const holdingsNetWorth = getPortfolioNetWorth(holdings);
+  const hasImportedHoldings = holdings.length > 0 && holdingsNetWorth > 0;
+
+  if (hasImportedHoldings) {
+    savingsLabel.textContent = 'Portfolio Net Worth (from holdings)';
+    savingsInput.value = String(Math.round(holdingsNetWorth));
+    savingsInput.readOnly = true;
+    savingsInput.setAttribute('aria-readonly', 'true');
+    savingsHint.textContent = 'Derived automatically from your imported holdings. Add planner adjustments in the next step if you need to include assets outside this portfolio.';
+    return;
+  }
+
+  savingsLabel.textContent = 'Current Net Worth';
+  savingsInput.readOnly = false;
+  savingsInput.removeAttribute('aria-readonly');
+  savingsHint.textContent = 'Enter your current investable net worth.';
+}
+
 function attachGlobals(): void {
   Object.assign(win, {
     exportBackup,
@@ -1148,6 +1172,7 @@ function renderPortfolio(): void {
 }
 
 function readPlannerInputs() {
+  const plannerStartingNetWorth = resolvePlannerStartingNetWorth(holdings, readFloat('currentSavings', 50000));
   return {
     currentAge: readInt('currentAge', 30),
     filingStatus: readFilingStatus(),
@@ -1157,7 +1182,7 @@ function readPlannerInputs() {
     spouseRetirementAge: readInt('spouseRetirementAge', readInt('spouseAge', readInt('currentAge', 30))),
     annualIncome: readFloat('annualIncome', 100000),
     annualExpenses: readFloat('annualExpenses', 40000),
-    currentSavings: readFloat('currentSavings', 50000),
+    currentSavings: plannerStartingNetWorth,
     returnRate: readFloat('returnRate', 7),
     inflationRate: readFloat('inflationRate', 3),
     withdrawalRate: readFloat('withdrawalRate', 4),
@@ -1497,6 +1522,7 @@ function deletePlanningScenario(id: string): void {
 }
 
 function renderPlanner(forceChart = false, syncRetirementAge = true): void {
+  updatePlannerFundingSourceControls();
   const result = getPlannerResult();
   if (syncRetirementAge) syncRetirementAgeDefault();
   renderPlannerPage(result, forceChart || $('pagePlanner').classList.contains('active'));
@@ -1606,56 +1632,13 @@ function clearSymbolRefreshReport(): void {
   renderSymbolRefreshReport();
 }
 
-function getHoldingBalances(): {
-  taxable: number;
-  taxableBasis: number;
-  taxableCash: number;
-  taxableInvested: number;
-  taxableInvestedBasis: number;
-  ira: number;
-  roth: number;
-  hsa: number;
-} {
-  let taxable = 0;
-  let taxableBasis = 0;
-  let taxableCash = 0;
-  let taxableInvested = 0;
-  let taxableInvestedBasis = 0;
-  let ira = 0;
-  let roth = 0;
-  let hsa = 0;
-
-  for (const h of holdings) {
-    const value = h.shares * h.price;
-    const cost = h.shares * h.costBasis;
-    if (h.account === 'taxable') {
-      taxable += value;
-      taxableBasis += cost;
-      if (h.category === 'cash') {
-        taxableCash += value;
-      } else {
-        taxableInvested += value;
-        taxableInvestedBasis += cost;
-      }
-    } else if (h.account === 'ira') {
-      ira += value;
-    } else if (h.account === 'roth') {
-      roth += value;
-    } else if (h.account === 'hsa') {
-      hsa += value;
-    }
-  }
-
-  return { taxable, taxableBasis, taxableCash, taxableInvested, taxableInvestedBasis, ira, roth, hsa };
-}
-
 function renderDrawdown(): void {
   if (holdings.length === 0) {
     $('drawdownArea').innerHTML = '<div class="empty-state"><p>Add holdings to see drawdown analysis.</p></div>';
     return;
   }
 
-  const balances = getHoldingBalances();
+  const balances = getHoldingBalances(holdings);
   const retireAge = readRetirementAge();
   const currentAge = retireAge;
   const expenses = readFloat('ddExpenses', 40000);
@@ -2236,7 +2219,7 @@ function renderMedicareProjection(): void {
 }
 
 function renderLifetimePlan(prefix: 'co' | 'dp', allowConversion: boolean): void {
-  const portfolioBalances = getHoldingBalances();
+  const portfolioBalances = getHoldingBalances(holdings);
   const startAge = readRetirementAge();
   const lifeExp = readInt(`${prefix}LifeExp`, 90);
   const earnedIncome = 0;
