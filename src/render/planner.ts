@@ -1,6 +1,7 @@
 import { $ } from '../utils/dom';
 import { fmt, fmtK } from '../utils/format';
 import type { FirePlannerResult } from '../calc/fire';
+import type { PlannerConsistencyResult } from '../calc/planner-consistency';
 import type { PlannerPortfolioContext } from '../calc/portfolio-balance';
 
 function drawPlannerChart(result: FirePlannerResult): void {
@@ -118,6 +119,7 @@ export function renderPlannerPage(
   result: FirePlannerResult,
   shouldDrawChart: boolean,
   portfolioContext: PlannerPortfolioContext,
+  consistency: PlannerConsistencyResult,
 ): void {
   const statusMap = {
     on_track: { className: 'on-track' },
@@ -129,8 +131,21 @@ export function renderPlannerPage(
     result.yearsToFire !== null
       ? `${result.yearsToFire} year${result.yearsToFire === 1 ? '' : 's'} away`
       : 'Not reached';
+  const consistencyTone = consistency.status === 'validated'
+    ? 'positive'
+    : consistency.status === 'warning'
+      ? 'negative'
+      : 'neutral';
 
   $('plannerStatusBadge').innerHTML = `<div class="planner-status-badge ${status.className}">${yearsAwayLabel}</div>`;
+  $('plannerConsistencyArea').innerHTML = `
+    <div class="co-optimal-callout ${consistencyTone}" style="margin-bottom:1rem;">
+      <div class="co-optimal-title">${consistency.title}</div>
+      <div class="co-optimal-sub">
+        ${consistency.summary}
+        ${consistency.drivers.length > 0 ? `<br><br><strong>Why:</strong><br>${consistency.drivers.join('<br>')}` : ''}
+      </div>
+    </div>`;
 
   $('plannerResultsGrid').innerHTML = `
     <div class="stat blue">
